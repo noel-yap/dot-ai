@@ -1,0 +1,100 @@
+{
+  "evals": [
+    {
+      "id": "mocks-pain",
+      "should_trigger": true,
+      "file": "skills/functional-core-imperative-shell/evals/samples/order_processor.ts",
+      "prompt": "I'm trying to write tests for skills/functional-core-imperative-shell/evals/samples/order_processor.ts but every test ends up mocking both the database AND the email service just to verify the discount math. Can you read it and help me make it testable without all those mocks?",
+      "expected_output": "Claude reads the file, recognises the FCIS smell, and produces a refactor that extracts a pure decision function (e.g. decideDiscount/decideAlert) returning plain data. The pure core has no await/db./emailService./Date.now/Math.random/process.env/console. The original processOrder remains as a thin shell that reads, calls the core, and applies effects.",
+      "assertions": [
+        {
+          "id": "refactor-introduces-pure-function",
+          "description": "Output introduces at least one new exported/named function that takes plain data and returns plain data (no Promise return type), separate from processOrder."
+        },
+        {
+          "id": "pure-core-has-no-io-tokens",
+          "description": "The proposed pure-core function body contains none of: 'await ', 'db.', 'emailService.', 'fetch(', 'Date.now(', 'Math.random(', 'process.env', 'console.'."
+        },
+        {
+          "id": "shell-still-performs-io",
+          "description": "The proposed processOrder (or its replacement shell) still performs db.getOrder, emailService.send (where applicable), and db.updateStatus / db.updateOrderTotal."
+        },
+        {
+          "id": "preserves-discount-rules",
+          "description": "Refactor preserves the three-tier discount rule: platinum=15, gold>500=10, itemCount>=10 → 5, otherwise 0."
+        }
+      ]
+    },
+    {
+      "id": "split-decisions",
+      "should_trigger": true,
+      "file": "skills/functional-core-imperative-shell/evals/samples/order_processor.ts",
+      "prompt": "Please split the business decisions from the side effects in skills/functional-core-imperative-shell/evals/samples/order_processor.ts. The decisions about discount tier and which alert to send should not live inside the same function that does database and email I/O.",
+      "expected_output": "Claude refactors order_processor.ts into a pure functional core (decideDiscount / decideAlert returning a discriminated union or similar plain-data result) and a thin imperative shell. Pure core has no I/O tokens; shell preserves all original effects.",
+      "assertions": [
+        {
+          "id": "refactor-introduces-pure-function",
+          "description": "Output introduces at least one new exported/named function that takes plain data and returns plain data, separate from processOrder."
+        },
+        {
+          "id": "pure-core-has-no-io-tokens",
+          "description": "The proposed pure-core function body contains none of: 'await ', 'db.', 'emailService.', 'fetch(', 'Date.now(', 'Math.random(', 'process.env', 'console.'."
+        },
+        {
+          "id": "shell-still-performs-io",
+          "description": "Shell still performs db.getOrder, emailService.send, and db.updateStatus / db.updateOrderTotal."
+        },
+        {
+          "id": "alert-decision-extracted",
+          "description": "The which-alert-to-send decision is expressible as data (e.g. a discriminated union with kinds like 'none' / 'large' / 'large-international' / 'discount-applied') returned by a pure function."
+        }
+      ]
+    },
+    {
+      "id": "extract-pure-logic",
+      "should_trigger": true,
+      "file": "skills/functional-core-imperative-shell/evals/samples/order_processor.ts",
+      "prompt": "We have a few handlers that all duplicate the discount math from skills/functional-core-imperative-shell/evals/samples/order_processor.ts. Can you extract the pure logic so it can be reused across handlers without dragging the database and email dependencies along?",
+      "expected_output": "Claude extracts the discount calculation (and ideally the alert decision) into a pure function that takes the order shape as input and returns plain data. No DB or email dependencies in the extracted function.",
+      "assertions": [
+        {
+          "id": "refactor-introduces-pure-function",
+          "description": "Output introduces a new exported function for the discount math (or discount + alert decision) that takes plain data and returns plain data."
+        },
+        {
+          "id": "pure-core-has-no-io-tokens",
+          "description": "Extracted function body contains none of: 'await ', 'db.', 'emailService.', 'fetch(', 'Date.now(', 'Math.random(', 'process.env', 'console.'."
+        },
+        {
+          "id": "preserves-discount-rules",
+          "description": "Extracted function preserves the three-tier discount rule: platinum=15, gold>500=10, itemCount>=10 → 5, otherwise 0."
+        }
+      ]
+    },
+    {
+      "id": "saga-retry-backoff",
+      "should_trigger": false,
+      "file": "skills/functional-core-imperative-shell/evals/samples/pipeline_coordinator.ts",
+      "prompt": "The payment saga in skills/functional-core-imperative-shell/evals/samples/pipeline_coordinator.ts intermittently fails because fulfillmentApi.reserve times out under load. Add exponential-backoff retry to the fulfillment step (max 3 attempts, base delay 100ms) and keep the existing compensation behaviour intact.",
+      "expected_output": "Claude adds a retry loop with exponential backoff around the fulfillmentApi.reserve call, preserving the existing try/catch + compensation. The saga structure is unchanged — no extraction of a pure 'core'. The FCIS skill is NOT invoked, because the file is the canonical 'When NOT to use' case (I/O sequence IS the logic).",
+      "assertions": [
+        {
+          "id": "adds-retry-loop",
+          "description": "Output adds a retry construct (for/while loop with attempt counter, or an explicit retry helper) around fulfillmentApi.reserve."
+        },
+        {
+          "id": "preserves-compensation",
+          "description": "The compensation calls (paymentApi.refund on failure, fulfillmentApi.release where applicable) remain present and run in the right order."
+        },
+        {
+          "id": "no-pure-core-extraction",
+          "description": "Output does NOT introduce a pure-core/decision function for the saga. No comment like '// pure core', no new function whose body lacks all I/O while still describing the saga's sequence."
+        },
+        {
+          "id": "skill-not-invoked",
+          "description": "The functional-core-imperative-shell skill is not invoked during this run (e.g. no Skill tool use targeting it in the stream)."
+        }
+      ]
+    }
+  ]
+}
