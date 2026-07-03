@@ -1,0 +1,4 @@
+[submodule "vendor/sh-keyring"]
+	path = vendor/sh-keyring
+	url = https://github.com/noel-yap/sh-keyring.git
+	ignore = dirty
