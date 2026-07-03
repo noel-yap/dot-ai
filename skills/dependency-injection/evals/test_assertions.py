@@ -28,10 +28,11 @@ from ._assertions import (
     assert_no_deps_parameter_added,
     assert_no_production_default_deps,
     assert_skill_not_invoked,
+    assert_sut_has_no_bare_db_refs,
     assert_sut_has_no_bare_globals,
     assert_sut_has_no_bare_module_refs,
 )
-from binom_eval import EvalRun
+from binom_eval import AssertionFailure, EvalRun
 
 
 def _run(text: str, skill_invoked: bool = False) -> EvalRun:
@@ -134,6 +135,15 @@ class TestSubstringLeaks:
     def test_clean_block_no_leaks(self) -> None:
         assert _substring_leaks("this.clock(); this.log('x')") == []
 
+    def test_comment_mentions_are_not_leaks(self) -> None:
+        assert _substring_leaks("// no more Date.now( here\nthis.clock();") == []
+        assert _substring_leaks("/* dropped console. calls */ this.log('x')") == []
+
+
+class TestBareTokenLeaksComments:
+    def test_comment_mentions_are_not_leaks(self) -> None:
+        assert _bare_token_leaks("// callers used to pass db. directly\nthis.store.get(id);") == []
+
 
 class TestBareTokenLeaks:
     def test_finds_bare_db(self) -> None:
@@ -201,6 +211,26 @@ class TestIntroducesInjectionSeam:
             "```ts\nfunction f(x: number) {}\n```"
         )
 
+    def test_param_typed_by_declared_interface(self) -> None:
+        text = (
+            "```ts\n"
+            "interface OrderStore { getOrder(id: string): Promise<X>; }\n"
+            "export async function shipOrder(\n"
+            "  orderId: string,\n"
+            "  store: OrderStore,\n"
+            "): Promise<void> {}\n"
+            "```"
+        )
+        assert _introduces_injection_seam(text)
+
+    def test_param_typed_by_undeclared_type_does_not_count(self) -> None:
+        text = (
+            "```ts\n"
+            "export function shipOrder(orderId: string, store: Db) {}\n"
+            "```"
+        )
+        assert not _introduces_injection_seam(text)
+
 
 class TestIntroducesNarrowInterface:
     def test_interface(self) -> None:
@@ -238,6 +268,57 @@ class TestHasCompositionRoot:
 
     def test_import_alone_does_not_count(self) -> None:
         text = "```ts\nimport { db } from './db';\nfunction f() {}\n```"
+        assert not _has_composition_root(text)
+
+    def test_import_plus_partially_applied_wrapper(self) -> None:
+        text = (
+            "```ts\n"
+            "import { db } from './db';\n"
+            "export const shipOrderWithPrimaryDb = (orderId: string) =>\n"
+            "  shipOrder(orderId, db);\n"
+            "```"
+        )
+        assert _has_composition_root(text)
+
+    def test_wrapper_with_return_type_annotation(self) -> None:
+        text = (
+            "```ts\n"
+            "import { db } from './db';\n"
+            "export const shipProd = (id: string): Promise<void> =>\n"
+            "  shipOrder(id, db);\n"
+            "```"
+        )
+        assert _has_composition_root(text)
+
+    def test_import_plus_unannotated_deps_literal(self) -> None:
+        text = (
+            "```ts\n"
+            "import { db } from './db';\n"
+            "export const productionDeps = { store: db };\n"
+            "```"
+        )
+        assert _has_composition_root(text)
+
+    def test_default_param_fallback_is_not_a_root(self) -> None:
+        text = (
+            "```ts\n"
+            "import { db } from './db';\n"
+            "export async function shipOrder(\n"
+            "  orderId: string,\n"
+            "  store: OrderStore = db,\n"
+            "): Promise<void> {}\n"
+            "```"
+        )
+        assert not _has_composition_root(text)
+
+    def test_forwarding_wrapper_is_not_a_root(self) -> None:
+        text = (
+            "```ts\n"
+            "import { db } from './db';\n"
+            "export const shipAlias = (id: string, store: OrderStore) =>\n"
+            "  shipOrder(id, store);\n"
+            "```"
+        )
         assert not _has_composition_root(text)
 
 
@@ -352,12 +433,19 @@ class TestAssertSutHasNoBareGlobals:
 
     def test_fails_on_date_now_leak(self) -> None:
         text = "```ts\n// AFTER\nclass C { run() { return Date.now(); } }\n```"
-        with pytest.raises(AssertionError, match="bare global I/O tokens"):
+        with pytest.raises(
+            AssertionFailure, match="bare global I/O tokens"
+        ) as exc:
             assert_sut_has_no_bare_globals(_run(text))
+        assert exc.value.sections[0][0] == "Leaking SUT block"
+        assert "Date.now()" in exc.value.sections[0][1]
 
     def test_fails_when_no_sut_block(self) -> None:
-        with pytest.raises(AssertionError, match="no refactored SUT"):
+        with pytest.raises(
+            AssertionFailure, match="no refactored SUT"
+        ) as exc:
             assert_sut_has_no_bare_globals(_run("just prose"))
+        assert exc.value.sections == (("Assistant reply", "just prose"),)
 
 
 class TestAssertSutHasNoBareModuleRefs:
@@ -375,6 +463,32 @@ class TestAssertSutHasNoBareModuleRefs:
             assert_sut_has_no_bare_module_refs(_run(text))
 
 
+class TestAssertSutHasNoBareDbRefs:
+    def test_passes_when_other_collaborators_stay_hardcoded(self) -> None:
+        text = (
+            "```ts\n// SUT (under test)\n"
+            "export async function shipOrder(id: string, store: OrderStore) {\n"
+            "  const order = await store.getOrder(id);\n"
+            "  await emailService.send(order.email, 'Shipped', 'body');\n"
+            "}\n// end SUT (under test)\n```"
+        )
+        assert_sut_has_no_bare_db_refs(_run(text))
+
+    def test_fails_on_bare_db(self) -> None:
+        text = (
+            "```ts\n// SUT (under test)\n"
+            "export async function shipOrder(id: string) {\n"
+            "  const order = await db.getOrder(id);\n"
+            "}\n// end SUT (under test)\n```"
+        )
+        with pytest.raises(AssertionError, match="db module bare"):
+            assert_sut_has_no_bare_db_refs(_run(text))
+
+    def test_fails_when_no_sut_block(self) -> None:
+        with pytest.raises(AssertionFailure, match="no refactored SUT"):
+            assert_sut_has_no_bare_db_refs(_run("just prose"))
+
+
 class TestAssertCompositionRootPresent:
     def test_passes_when_import_plus_new(self) -> None:
         text = (
@@ -386,6 +500,13 @@ class TestAssertCompositionRootPresent:
     def test_fails_when_no_root(self) -> None:
         with pytest.raises(AssertionError, match="composition root"):
             assert_composition_root_present(_run("```ts\nfunction f() {}\n```"))
+
+    def test_passes_when_import_plus_wrapper(self) -> None:
+        text = (
+            "```ts\nimport { db } from './db';\n"
+            "export const shipProd = (id: string) => shipOrder(id, db);\n```"
+        )
+        assert_composition_root_present(_run(text))
 
 
 class TestAssertNarrowDepsInterface:
@@ -455,5 +576,8 @@ class TestAssertSkillNotInvoked:
         assert_skill_not_invoked(_run("", skill_invoked=False))
 
     def test_fails_when_invoked(self) -> None:
-        with pytest.raises(AssertionError, match="When-NOT-to-use"):
+        with pytest.raises(
+            AssertionFailure, match="When-NOT-to-use"
+        ) as exc:
             assert_skill_not_invoked(_run("", skill_invoked=True))
+        assert exc.value.sections == (("Tool uses", "[]"),)

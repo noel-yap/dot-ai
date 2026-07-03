@@ -20,7 +20,7 @@ from ._assertions import (
     assert_pure_core_no_io,
     assert_skill_not_invoked,
 )
-from binom_eval import EvalRun
+from binom_eval import AssertionFailure, EvalRun
 
 
 class TestCodeBlocks:
@@ -104,6 +104,32 @@ class TestLeakingTokens:
 class TestIoLeaksInPureBlocks:
     def test_no_code_blocks_returns_empty(self) -> None:
         assert _io_leaks_in_pure_blocks("no code blocks here") == []
+
+    def test_marked_region_in_complete_file_scopes_scan(self) -> None:
+        # A complete-file response carries the async shell in the same
+        # block; only the marked pure-core region may be held to purity.
+        text = (
+            "```ts\n"
+            "// pure core\n"
+            "function decide(o: Order) { return o.total > 100; }\n"
+            "// end pure core\n"
+            "async function processOrder(id: string) {\n"
+            "  const o = await db.getOrder(id);\n"
+            "  if (decide(o)) await emailService.send(o.email);\n"
+            "}\n"
+            "```"
+        )
+        assert _io_leaks_in_pure_blocks(text) == []
+
+    def test_comment_mentions_of_io_are_not_leaks(self) -> None:
+        text = (
+            "```ts\n"
+            "// pure core: no more await db. or emailService. calls here\n"
+            "function decide(o: Order) { return o.total > 100; }\n"
+            "// end pure core\n"
+            "```"
+        )
+        assert _io_leaks_in_pure_blocks(text) == []
 
     def test_leaky_pure_block_returns_token_snippet_pairs(self) -> None:
         text = (
@@ -224,8 +250,27 @@ class TestAssertPureCoreNoIo:
                 "```"
             ),
         )
-        with pytest.raises(AssertionError, match="leak I/O tokens"):
+        with pytest.raises(
+            AssertionFailure, match="leak I/O tokens"
+        ) as exc:
             assert_pure_core_no_io(run)
+        assert exc.value.sections[0][0] == "Leaking pure-core block"
+        assert "db.getOrder" in exc.value.sections[0][1]
+
+    def test_no_candidate_block_attaches_reply_section(self) -> None:
+        run = EvalRun(
+            eval_id="t",
+            prompt="",
+            skill_invoked=True,
+            assistant_text="prose only, no code blocks",
+        )
+        with pytest.raises(
+            AssertionFailure, match="no candidate"
+        ) as exc:
+            assert_pure_core_no_io(run)
+        assert exc.value.sections == (
+            ("Assistant reply", "prose only, no code blocks"),
+        )
 
 
 class TestAssertNoPureCoreExtraction:
@@ -263,8 +308,9 @@ class TestAssertSkillNotInvoked:
         run = EvalRun(
             eval_id="t", prompt="", skill_invoked=True, assistant_text=""
         )
-        with pytest.raises(AssertionError):
+        with pytest.raises(AssertionFailure) as exc:
             assert_skill_not_invoked(run)
+        assert exc.value.sections == (("Tool uses", "[]"),)
 
     def test_passes_when_skill_not_invoked(self) -> None:
         run = EvalRun(

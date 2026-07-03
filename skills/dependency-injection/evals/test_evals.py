@@ -23,6 +23,13 @@ one should NOT trigger the skill (it is the canonical "When NOT to use"
 case from the SKILL.md), and the test asserts both that the skill stayed
 quiet and that Claude added tests without inventing DI ceremony.
 
+The test functions themselves come from binom-eval's
+``register_live_eval_tests``, which attaches three ``live_eval``-marked
+nodes to this module: ``test_eval_assertion`` (one node per
+eval/assertion pair), ``test_eval_expectation`` (per-eval rollup against
+``expected_output``), and ``test_should_trigger_evals_invoked_skill``
+(the skill-trigger rollup over the ``should_trigger`` evals).
+
 These tests carry the ``live_eval`` marker because each model call costs
 time and money; select them with ``-m live_eval`` (see conftest.py) or via
 ``make eval-dependency-injection``. The unit targets exclude them with
@@ -33,30 +40,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-from binom_eval import assert_eval_passed, load_evals, trial_outcomes
+from binom_eval import register_live_eval_tests
 
 from ._assertions import ASSERTION_HANDLERS
 
 EVAL_DIR = Path(__file__).resolve().parent
+SKILL_NAME = EVAL_DIR.parent.name
 
-_EVALS = load_evals(EVAL_DIR / "evals.json", ASSERTION_HANDLERS)
-_EVALS_BY_ID = {ev["id"]: ev for ev in _EVALS}
-
-
-def _check_skill_invoked(run: object) -> None:
-    assert run.skill_invoked, "skill was not invoked"
-
-
-@pytest.mark.live_eval
-@pytest.mark.parametrize("eval_id", [ev["id"] for ev in _EVALS])
-def test_eval(eval_id: str, eval_runs, live_eval_target_rate: float) -> None:
-    ev = _EVALS_BY_ID[eval_id]
-    runs = eval_runs[eval_id]
-    for assertion in ev.get("assertions", []):
-        handler = ASSERTION_HANDLERS[assertion["id"]]
-        outcomes = trial_outcomes(runs, handler)
-        assert_eval_passed(outcomes, live_eval_target_rate, f"{eval_id}::{assertion['id']}")
-    if ev.get("should_trigger"):
-        outcomes = trial_outcomes(runs, _check_skill_invoked)
-        assert_eval_passed(outcomes, live_eval_target_rate, f"{eval_id}::trigger")
+register_live_eval_tests(
+    globals(),
+    evals_path=EVAL_DIR / "evals.json",
+    handlers=ASSERTION_HANDLERS,
+    subject_name=SKILL_NAME,
+)
