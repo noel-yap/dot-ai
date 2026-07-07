@@ -1,0 +1,104 @@
+{
+  "evals": [
+    {
+      "id": "untangle-shipping-quote",
+      "should_trigger": true,
+      "file": "skills/extraction-for-clarity/evals/samples/shipping_quote.ts",
+      "prompt": "quoteShipping in skills/extraction-for-clarity/evals/samples/shipping_quote.ts has become a wall of nested ifs and unexplained numbers — reviewers keep asking what 167 or 1.35 mean, and I have to re-read the whole function to change any one rule. Can you refactor it for readability without changing its behavior? In your final response, include both the original code (labeled with a `// BEFORE` comment) and the complete refactored TypeScript (labeled with a `// AFTER` comment), each in its own ```typescript code block, even if you also edit files directly.",
+      "expected_output": "Claude reads the file, recognises the extraction-for-clarity smells (comment-labeled phases, nesting, magic numbers), and refactors quoteShipping into a short orchestrator over named helper functions (e.g. billableWeightCharge / zoneSurcharge / fragileHandlingFee), with the bare literals promoted to named UPPER_SNAKE constants. Behavior — every rate, threshold, and rounding rule — is unchanged.",
+      "assertions": [
+        {
+          "id": "extracts-named-helpers",
+          "description": "The AFTER code declares at least two named functions that do not exist in the BEFORE code."
+        },
+        {
+          "id": "helper-names-are-descriptive",
+          "description": "The newly extracted helper names state intent: none are vague (helper/util/process/data/doStuff), and at least two are multi-word camelCase."
+        },
+        {
+          "id": "names-magic-numbers",
+          "description": "The AFTER code declares at least three UPPER_SNAKE_CASE named constants for the previously bare numeric literals."
+        },
+        {
+          "id": "reduces-nesting",
+          "description": "The AFTER code's maximum brace-nesting depth is strictly lower than the BEFORE code's."
+        },
+        {
+          "id": "preserves-shipping-rules",
+          "description": "The refactor keeps the rate table intact: the distinctive literals (167 dimensional divisor, 4.1 rate, 1.35 island multiplier, 0.92 bulk discount, etc.) survive as constant values, and the zone names remain."
+        }
+      ]
+    },
+    {
+      "id": "comments-into-functions",
+      "should_trigger": true,
+      "file": "skills/extraction-for-clarity/evals/samples/shipping_quote.ts",
+      "prompt": "The comment headers in skills/extraction-for-clarity/evals/samples/shipping_quote.ts (base rate, zone surcharges, fragile handling fees, expedited service and bulk discount) are doing the job function names should be doing. Please extract those sections so quoteShipping reads as a sequence of named steps, keeping the results identical. In your final response, include both the original code (labeled with a `// BEFORE` comment) and the complete refactored TypeScript (labeled with a `// AFTER` comment), each in its own ```typescript code block, even if you also edit files directly.",
+      "expected_output": "Claude extracts one named function per comment-labeled phase so quoteShipping becomes a short orchestrator; the section comments disappear into function names. All rates and thresholds are preserved exactly.",
+      "assertions": [
+        {
+          "id": "extracts-named-helpers",
+          "description": "The AFTER code declares at least two named functions that do not exist in the BEFORE code."
+        },
+        {
+          "id": "helper-names-are-descriptive",
+          "description": "The newly extracted helper names state intent: none are vague, and at least two are multi-word camelCase."
+        },
+        {
+          "id": "reduces-nesting",
+          "description": "The AFTER code's maximum brace-nesting depth is strictly lower than the BEFORE code's."
+        },
+        {
+          "id": "preserves-shipping-rules",
+          "description": "The rate table survives the extraction: distinctive literals remain as values and the zone names remain."
+        }
+      ]
+    },
+    {
+      "id": "name-the-conditional",
+      "should_trigger": true,
+      "file": "skills/extraction-for-clarity/evals/samples/document_permissions.ts",
+      "prompt": "canEditDocument in skills/extraction-for-clarity/evals/samples/document_permissions.ts is a single boolean expression with a ternary chain inside it, and nobody on the team can say which rule grants or denies access. Can you make the conditions self-documenting without changing what it returns? In your final response, include both the original code (labeled with a `// BEFORE` comment) and the complete refactored TypeScript (labeled with a `// AFTER` comment), each in its own ```typescript code block, even if you also edit files directly.",
+      "expected_output": "Claude decomposes the boolean into named predicate helpers (e.g. isOwner / canAdminEdit / isTeamEditable) and/or guard clauses, so canEditDocument reads as the access policy. The rules — suspension, archived status, admin lock override, editor ownership or draft team edits — are all preserved.",
+      "assertions": [
+        {
+          "id": "extracts-named-helpers",
+          "description": "The AFTER code declares at least two named functions that do not exist in the BEFORE code."
+        },
+        {
+          "id": "extracts-boolean-predicates",
+          "description": "At least one newly extracted helper is a predicate named is*/has*/can*/should*."
+        },
+        {
+          "id": "helper-names-are-descriptive",
+          "description": "The newly extracted helper names state intent: none are vague, and at least two are multi-word camelCase."
+        },
+        {
+          "id": "preserves-permission-rules",
+          "description": "All five policy inputs (suspended, archived, locked, allowTeamEdits, draft) still participate in the AFTER logic."
+        }
+      ]
+    },
+    {
+      "id": "plain-fix-no-extraction",
+      "should_trigger": false,
+      "file": "skills/extraction-for-clarity/evals/samples/stats.ts",
+      "prompt": "mean and median in skills/extraction-for-clarity/evals/samples/stats.ts misbehave on empty input (NaN / undefined). Make both throw a RangeError for an empty array, keeping everything else exactly as it is. In your final response, include both the original code (labeled with a `// BEFORE` comment) and the complete updated TypeScript (labeled with a `// AFTER` comment), each in its own ```typescript code block, even if you also edit files directly.",
+      "expected_output": "Claude adds an empty-input guard throwing RangeError to both functions and changes nothing else. The functions are already clear, so no helpers are extracted, nothing is renamed, and the extraction-for-clarity skill is NOT invoked — this is the canonical 'When NOT to use' case.",
+      "assertions": [
+        {
+          "id": "adds-empty-input-guard",
+          "description": "The AFTER code throws RangeError when the input array is empty (a length check guarding both functions)."
+        },
+        {
+          "id": "no-refactor-ceremony",
+          "description": "The AFTER code keeps mean and median intact and introduces at most one new function (a shared guard is acceptable); no renaming or decomposition ceremony."
+        },
+        {
+          "id": "skill-not-invoked",
+          "description": "The extraction-for-clarity skill is not invoked during this run."
+        }
+      ]
+    }
+  ]
+}

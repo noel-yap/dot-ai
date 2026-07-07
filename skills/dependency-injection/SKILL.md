@@ -1,6 +1,6 @@
 ---
 name: dependency-injection
-description: Use when refactoring TypeScript code whose tests require monkey-patching modules, swapping globals, or stubbing imports because collaborators (database, HTTP client, clock, RNG, env, logger) are hardcoded inside the unit. Trigger on requests like "I can't test this without mocking the import", "this depends on a global singleton", "inject the clock/db", "pass the X in", or "decouple from the X module". Provides identification heuristics, a step-by-step procedure, before/after TypeScript examples using constructor and parameter injection, and anti-patterns.
+description: Use when refactoring TypeScript code whose tests require monkey-patching modules, swapping globals, or stubbing imports (vi.mock, jest.mock, sinon) because collaborators (database, HTTP client, clock, RNG, env, logger) are hardcoded inside the unit. Trigger on requests like "I can't test this without mocking the import", "every test has to vi.mock/jest.mock this module", "make this testable without monkey-patching or stubbing globals", "this depends on a global singleton", "inject the clock/db", "pass the X in", or "decouple from the X module". Provides identification heuristics, a step-by-step procedure, before/after TypeScript examples using constructor and parameter injection, and anti-patterns.
 ---
 
 # Dependency Injection
@@ -77,12 +77,20 @@ the unit does not need to know about `Date`.
 5. **Wire production at the boundary.** A composition root (module
    bottom, `main`, route handler, factory) constructs the real
    collaborators and hands them to the unit. The unit itself imports no
-   I/O modules.
+   I/O modules. For a function-style unit the root can be a
+   partially-applied wrapper, e.g.
+   `const shipOrderWithDb = (id: string) => shipOrder(id, db)`. Include
+   the composition root even when only one collaborator is being
+   decoupled: without it the production wiring has no home, and the
+   defaulted-parameter anti-pattern creeps back in.
 6. **Rewrite tests to pass fakes.** Construct the unit with in-memory or
    canned doubles. Delete `vi.mock` / `jest.mock` of production modules.
 7. **Make injected deps required.** Avoid `constructor(db = realDb)`
    defaults — they silently re-couple the unit to the production module
-   when callers forget.
+   when callers forget — and the same for function parameters
+   (`store: OrderStore = db`). When existing call sites must keep
+   working, export a composition-root wrapper instead of defaulting the
+   parameter.
 
 ## TypeScript example 1: order shipper with constructor injection
 
@@ -256,10 +264,14 @@ the right tool on its own.
 - **Service locator masquerading as DI.** Passing a single `Container`
   parameter that the unit then queries (`container.get("db")`) is just
   hidden globals with extra steps. Inject named, typed collaborators.
-- **Optional with production default.** `constructor(db = realDb)` reads
-  cleaner but re-couples the unit to the production module the moment a
-  caller forgets to pass `db`. Tests can silently hit real I/O. Make
-  injected deps required; let the composition root supply them.
+- **Optional with production default.** `constructor(db = realDb)` and
+  its function twin `shipOrder(id, store: OrderStore = db)` read cleaner
+  but re-couple the unit to the production module the moment a caller
+  forgets to pass `db`. Tests can silently hit real I/O. Make injected
+  deps required; let the composition root supply them. When existing
+  call sites must keep working, a backwards-compatible wrapper
+  (`const shipOrderWithDb = (id) => shipOrder(id, db)`) preserves them
+  without the default.
 - **Newing collaborators in the constructor.** `constructor() { this.db
   = new Db() }` is identical to a hardcoded import — no seam. Move the
   `new` to the composition root.

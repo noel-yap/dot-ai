@@ -8,41 +8,33 @@
 #   make eval
 #   make eval-dependency-injection
 #
-# Vars (passed through to skills/): MAX_TRIALS TARGET_RATE CONCURRENCY ISOLATE
-# PYTEST_ARGS PYTHON
+# Vars (passed through to skills/): MODEL MAX_TRIALS TARGET_RATE CONCURRENCY
+# ISOLATE PYTEST_ARGS
 
-PYTHON ?= python3
 SKILLS := skills
 
 .DEFAULT_GOAL := help
 
-# Mirrors the stamp path from skills/Makefile so top-level targets can depend
-# on it directly; install only reruns when requirements.txt changes.
-ENV_ID        := $(shell $(PYTHON) -c 'import sys,hashlib; print(hashlib.sha1(sys.prefix.encode()).hexdigest()[:12])')
-INSTALL_STAMP := $(SKILLS)/.install.$(ENV_ID).stamp
-
-.PHONY: help test test-unit eval clean
+.PHONY: help install test test-unit eval clean
 
 help: ## Show skill eval targets (delegates to skills/)
 	@$(MAKE) -C $(SKILLS) help
 
-install: $(INSTALL_STAMP) ## Install pinned deps into the active Python environment
-
-$(INSTALL_STAMP): $(SKILLS)/requirements.txt
+install: ## Sync the skills project venv from uv.lock
 	@$(MAKE) -C $(SKILLS) install
 
-test: $(INSTALL_STAMP) ## Run unit tests then claude evals
+test: ## Run unit tests then live evals
 	@$(MAKE) -C $(SKILLS) test
 
-test-unit: $(INSTALL_STAMP) ## Run fast unit tests only (no API calls)
+test-unit: ## Run fast unit tests only (no API calls)
 	@$(MAKE) -C $(SKILLS) test-unit
 
-eval: $(INSTALL_STAMP) ## Run all skill claude evals (real model calls)
+eval: ## Run all skill live evals (real model calls)
 	@$(MAKE) -C $(SKILLS) eval
 
 clean: ## Remove install stamps and pytest caches under skills/
 	@$(MAKE) -C $(SKILLS) clean
 
 .PHONY: eval-%
-eval-%: $(INSTALL_STAMP) ## Run claude evals for one skill (e.g. make eval-dependency-injection)
+eval-%: ## Run live evals for one skill (e.g. make eval-dependency-injection)
 	@$(MAKE) -C $(SKILLS) eval-$*

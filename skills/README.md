@@ -7,12 +7,12 @@ stream-json parser, and a pytest plugin). Each skill adds a thin `evals/`
 package that binds the harness to its own skill name, sample files, and
 assertions.
 
-`binom-eval` is a dependency, pinned in `requirements.txt`. Install it before
-running anything:
-
-```bash
-make install   # uv pip install -r requirements.txt
-```
+`binom-eval` is a dependency, pinned in `pyproject.toml` and locked in
+`uv.lock`. No install step is needed: every make target runs through
+`uv run`, which syncs the project venv from the lockfile on demand — so the
+suite is independent of whatever is installed in the invoking shell's
+environment. To upgrade the pin: bump the tag in `pyproject.toml`, run
+`uv lock`, and commit both files.
 
 This README explains how to stand up an eval suite for a **new skill**.
 
@@ -168,7 +168,7 @@ eval_runs = bind_eval_runs_fixture(
     EVAL_DIR,
     SKILL_NAME,
     ASSERTION_HANDLERS,
-    repo_root=EVAL_DIR.parents[3],   # omit when prompts run in EVAL_DIR only
+    repo_root=EVAL_DIR.parents[2],   # omit when prompts run in EVAL_DIR only
 )
 ```
 
@@ -213,7 +213,7 @@ register_live_eval_tests(
 ## How grading works
 
 The verdict is a Beta-binomial posterior over each assertion's true pass rate,
-graded adaptively against a target rate (default **3/5**) over a trial budget
+graded adaptively against a target rate (default **2/3**) over a trial budget
 (default **21**). The model, the verdict band, and the reasoning behind every
 default (`TARGET_RATE`, `MAX_TRIALS`, `BATCH_FLOOR`, the band, the prior, the
 tiebreak) are documented in binom-eval's
@@ -226,14 +226,28 @@ Makefile (below); the rest are module constants in `binom_eval.grading`.
 From `skills/` (a `Makefile` wraps the common cases):
 
 ```sh
-make test                  # everything: unit tests then claude evals
+make test                  # everything: unit tests then live evals
 make test-unit             # fast unit tests for all skills, no API calls
-make eval                  # every skill's claude evals, in parallel (target 3/5, <=21 runs)
-make eval-<skill-name>     # one skill's claude evals
+make eval                  # every skill's live evals, in parallel (target 2/3, <=21 runs)
+make eval-<skill-name>     # one skill's live evals
 make eval TARGET_RATE=0.8 MAX_TRIALS=12
-make eval CONCURRENCY=2    # cap in-flight `claude -p` calls (default 5)
+make eval CONCURRENCY=2    # cap in-flight agent calls (default 5)
+make eval SHOW_POSTERIOR=0 # omit per-check posterior lines from output
 make eval ISOLATE=0        # run in the live tree (no per-trial copy)
+make eval MODEL=claude:haiku   # pick another backend:model
 ```
+
+Trials run on the backend and model in `MODEL` (default
+`cursor:claude-opus-4-8-high`, i.e. `cursor-agent` driving Opus 4.8). The
+cursor backend needs the `cursor-agent` CLI on `PATH` and authenticates via
+`CURSOR_API_KEY` — live runs execute under a throwaway `HOME`, so an
+interactive login is deliberately not used. The eval targets resolve that key
+with `set_key` from [sh-keyring](https://github.com/noel-yap/sh-keyring)
+(vendored as a git submodule at `vendor/sh-keyring`), which checks the env,
+the macOS Keychain, 1Password, and AWS Secrets Manager in that order. Model
+ids come from `cursor-agent --list-models`.
+The claude backend (`MODEL=claude:<model>`) runs `claude -p` with isolated
+settings (`--bare`) and authenticates only via `ANTHROPIC_API_KEY`.
 
 `make eval` runs every skill's trials concurrently under binom-eval's built-in
 parallelism: one shared in-process semaphore (`--live-eval-concurrency`,

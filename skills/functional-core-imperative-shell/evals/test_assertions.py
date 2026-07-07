@@ -20,7 +20,7 @@ from ._assertions import (
     assert_pure_core_no_io,
     assert_skill_not_invoked,
 )
-from binom_eval import EvalRun
+from binom_eval import AssertionFailure, EvalRun
 
 
 class TestCodeBlocks:
@@ -29,11 +29,11 @@ class TestCodeBlocks:
             "before\n```typescript\nconst x = 1;\n```\n"
             "between\n```ts\nconst y = 2;\n```\nafter"
         )
-        assert _code_blocks(text) == ["const x = 1;\n", "const y = 2;\n"]
+        assert _code_blocks(text) == ["const x = 1;", "const y = 2;"]
 
     def test_extracts_unlabelled_blocks(self) -> None:
         text = "```\nconst z = 3;\n```"
-        assert _code_blocks(text) == ["const z = 3;\n"]
+        assert _code_blocks(text) == ["const z = 3;"]
 
 
 class TestIsCandidatePureBlock:
@@ -65,7 +65,7 @@ class TestCandidatePureBlocks:
     def test_includes_matching_block(self) -> None:
         text = "```ts\nfunction decide(x: number) { return x > 0; }\n```"
         assert _candidate_pure_blocks(text) == [
-            "function decide(x: number) { return x > 0; }\n"
+            "function decide(x: number) { return x > 0; }"
         ]
 
     def test_excludes_non_matching_block(self) -> None:
@@ -104,6 +104,32 @@ class TestLeakingTokens:
 class TestIoLeaksInPureBlocks:
     def test_no_code_blocks_returns_empty(self) -> None:
         assert _io_leaks_in_pure_blocks("no code blocks here") == []
+
+    def test_marked_region_in_complete_file_scopes_scan(self) -> None:
+        # A complete-file response carries the async shell in the same
+        # block; only the marked pure-core region may be held to purity.
+        text = (
+            "```ts\n"
+            "// pure core\n"
+            "function decide(o: Order) { return o.total > 100; }\n"
+            "// end pure core\n"
+            "async function processOrder(id: string) {\n"
+            "  const o = await db.getOrder(id);\n"
+            "  if (decide(o)) await emailService.send(o.email);\n"
+            "}\n"
+            "```"
+        )
+        assert _io_leaks_in_pure_blocks(text) == []
+
+    def test_comment_mentions_of_io_are_not_leaks(self) -> None:
+        text = (
+            "```ts\n"
+            "// pure core: no more await db. or emailService. calls here\n"
+            "function decide(o: Order) { return o.total > 100; }\n"
+            "// end pure core\n"
+            "```"
+        )
+        assert _io_leaks_in_pure_blocks(text) == []
 
     def test_leaky_pure_block_returns_token_snippet_pairs(self) -> None:
         text = (
@@ -224,8 +250,78 @@ class TestAssertPureCoreNoIo:
                 "```"
             ),
         )
-        with pytest.raises(AssertionError, match="leak I/O tokens"):
+        with pytest.raises(
+            AssertionFailure, match="leak I/O tokens"
+        ) as exc:
             assert_pure_core_no_io(run)
+        assert exc.value.sections[0][0] == "Leaking pure-core block"
+        assert "db.getOrder" in exc.value.sections[0][1]
+
+    def test_no_candidate_block_attaches_reply_section(self) -> None:
+        run = EvalRun(
+            eval_id="t",
+            prompt="",
+            skill_invoked=True,
+            assistant_text="prose only, no code blocks",
+        )
+        with pytest.raises(
+            AssertionFailure, match="no candidate"
+        ) as exc:
+            assert_pure_core_no_io(run)
+        assert exc.value.sections == (
+            ("Assistant reply", "prose only, no code blocks"),
+        )
+
+    def test_passes_for_decorated_marker_with_async_shell(self) -> None:
+        # Decoration-tolerant markers ('// --- pure core: ... ---') must
+        # still scope the scan to the marked region, leaving the async
+        # shell that follows untouched.
+        run = EvalRun(
+            eval_id="t",
+            prompt="",
+            skill_invoked=True,
+            assistant_text=(
+                "```typescript\n"
+                "// --- pure core: data in, data out, no I/O ---\n"
+                "function decide(o: { total: number }) {\n"
+                "  return o.total > 1000 ? 'large' : 'small';\n"
+                "}\n"
+                "// --- end pure core ---\n"
+                "export async function processOrder() {\n"
+                "  await db.getOrder();\n"
+                "}\n"
+                "```"
+            ),
+        )
+        assert_pure_core_no_io(run)
+
+    def test_fails_when_decorated_marked_region_awaits(self) -> None:
+        # The decoration-tolerant marker must still scope the leak scan to
+        # the marked region itself, not just find it.
+        run = EvalRun(
+            eval_id="t",
+            prompt="",
+            skill_invoked=True,
+            assistant_text=(
+                "```typescript\n"
+                "// --- pure core: data in, data out, no I/O ---\n"
+                "function decide(o: { id: string }) {\n"
+                "  const row = await db.getOrder(o.id);\n"
+                "  return row;\n"
+                "}\n"
+                "// --- end pure core ---\n"
+                "export async function processOrder() {\n"
+                "  await db.getOrder();\n"
+                "}\n"
+                "```"
+            ),
+        )
+        with pytest.raises(
+            AssertionFailure, match="leak I/O tokens"
+        ) as exc:
+            assert_pure_core_no_io(run)
+        assert exc.value.sections[0][0] == "Leaking pure-core block"
+        assert "db.getOrder" in exc.value.sections[0][1]
 
 
 class TestAssertNoPureCoreExtraction:
@@ -236,6 +332,22 @@ class TestAssertNoPureCoreExtraction:
             skill_invoked=False,
             assistant_text=(
                 "```ts\n// pure core\nfunction f() {}\n// end pure core\n```"
+            ),
+        )
+        with pytest.raises(AssertionError, match="pure core"):
+            assert_no_pure_core_extraction(run)
+
+    def test_flags_decorated_pure_core_marker(self) -> None:
+        run = EvalRun(
+            eval_id="t",
+            prompt="",
+            skill_invoked=False,
+            assistant_text=(
+                "```typescript\n"
+                "// --- pure core ---\n"
+                "function f() {}\n"
+                "// --- end pure core ---\n"
+                "```"
             ),
         )
         with pytest.raises(AssertionError, match="pure core"):
@@ -263,8 +375,9 @@ class TestAssertSkillNotInvoked:
         run = EvalRun(
             eval_id="t", prompt="", skill_invoked=True, assistant_text=""
         )
-        with pytest.raises(AssertionError):
+        with pytest.raises(AssertionFailure) as exc:
             assert_skill_not_invoked(run)
+        assert exc.value.sections == (("Tool uses", "[]"),)
 
     def test_passes_when_skill_not_invoked(self) -> None:
         run = EvalRun(

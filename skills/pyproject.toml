@@ -1,0 +1,33 @@
+# Skill eval-suite project. `uv run pytest` (via the Makefile) resolves these
+# dependencies against uv.lock and syncs the project venv before every run,
+# so results never depend on whatever happens to be installed in the
+# invoking shell's environment.
+#
+# binom-eval supplies the Beta-binomial grading, the live-eval runners
+# (claude / cursor backends), the stream-json parser, and the pytest plugin
+# (the `--live-eval-*` options, the `live_eval` marker, and the
+# `live_eval_target_rate` fixture). Installing it registers that plugin via
+# its `pytest11` entry point, so no conftest sys.path wiring is needed.
+#
+# Eval parallelism is built into binom-eval: a single in-process semaphore
+# (`--live-eval-concurrency`) caps total in-flight agent calls across the
+# whole session. binom-eval's README advises against layering pytest-xdist
+# (`-n`) on top -- each worker would get its own semaphore and recompute the
+# session-scoped fixture -- so this suite does not depend on it.
+#
+# Pinned to a git tag for reproducibility. To upgrade: bump the tag here,
+# run `uv lock`, and commit both files.
+[project]
+name = "skill-evals"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "binom-eval",
+    "pytest",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+binom-eval = { git = "https://github.com/noel-yap/binom-eval", tag = "v1.0.0" }

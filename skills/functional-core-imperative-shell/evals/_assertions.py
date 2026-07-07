@@ -6,11 +6,14 @@ import itertools
 import re
 
 from binom_eval import (
+    AssertionFailure,
     EvalRun,
     ARROW_FN_RE,
     NAMED_FN_RE,
     code_blocks as _code_blocks,
+    comment_mark_re as _comment_mark_re,
     first_line as _first_line,
+    marked_regions as _marked_regions,
     missing_from as _missing_from,
 )
 
@@ -30,6 +33,18 @@ PURE_CORE_IO_TOKENS = (
 )
 
 ASYNC_FN_RE = re.compile(r"\basync\s+(?:function|\()")
+
+# Marked pure-core region per the SKILL convention: a decoration-tolerant
+# '// ... pure core ...' opener (e.g. '// --- pure core: data in ---') up to
+# '// ... end pure core', or to the end of the block when the close marker
+# is omitted. Complete-file responses carry the shell in the same code
+# block, so only the marked region -- not the whole block -- may be held to
+# purity. See binom_eval.comment_mark_re / marked_regions for the matching
+# rules.
+PURE_CORE_MARK_RE = _comment_mark_re("pure core")
+
+_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 
 _SHELL_FN_NAMES = frozenset({"processOrder"})
 _REQUIRED_SHELL_IO_CALLS = (
@@ -53,11 +68,11 @@ def _is_candidate_pure_block(block: str) -> bool:
     """Return True if the block looks like a pure-core function.
 
     A block qualifies if it is a sync named/arrow function, or is
-    explicitly marked with '// pure core'.
+    explicitly marked with a (decoration-tolerant) '// pure core' comment.
     """
     return any(
         [
-            "// pure core" in block.lower(),
+            bool(PURE_CORE_MARK_RE.search(block)),
             all(
                 [
                     not ASYNC_FN_RE.search(block),
@@ -68,9 +83,32 @@ def _is_candidate_pure_block(block: str) -> bool:
     )
 
 
+def _strip_comments(code: str) -> str:
+    """Drop // line comments and /* */ block comments before token scans.
+
+    Prose in comments legitimately mentions I/O collaborators ("the
+    decisions no longer touch db or emailService"), so only code may
+    trip the leak tokens.
+    """
+    return _LINE_COMMENT_RE.sub("", _BLOCK_COMMENT_RE.sub("", code))
+
+
 def _candidate_pure_blocks(text: str) -> list[str]:
-    """Filter code blocks down to the pure-core candidates."""
-    return list(filter(_is_candidate_pure_block, _code_blocks(text)))
+    """Extract the pure-core candidate regions from the code blocks.
+
+    Blocks carrying a (decoration-tolerant) '// pure core' marker
+    contribute only their marked regions (a complete-file block also
+    contains the shell); unmarked blocks qualify wholesale when they look
+    like a sync function.
+    """
+    candidates: list[str] = []
+    for block in _code_blocks(text):
+        regions = _marked_regions(block, "pure core")
+        if regions:
+            candidates.extend(regions)
+        elif _is_candidate_pure_block(block):
+            candidates.append(block)
+    return candidates
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +135,9 @@ def _new_function_names(text: str) -> set[str]:
 
 
 def _leaking_tokens(block: str) -> list[str]:
-    """Return which PURE_CORE_IO_TOKENS appear in a code block."""
-    return list(filter(block.__contains__, PURE_CORE_IO_TOKENS))
+    """Return which PURE_CORE_IO_TOKENS appear in a code block's code."""
+    code = _strip_comments(block)
+    return list(filter(code.__contains__, PURE_CORE_IO_TOKENS))
 
 
 def _io_leaks_in_pure_blocks(text: str) -> list[tuple[str, str]]:
@@ -152,47 +191,89 @@ def _suspicious_saga_fn_names(text: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Failure-context helpers
+# ---------------------------------------------------------------------------
+
+
+def _reply_sections(run: EvalRun) -> tuple[tuple[str, str], ...]:
+    """Label the run's full reply for AssertionFailure ``sections``."""
+    return (("Assistant reply", run.assistant_text or "(empty)"),)
+
+
+def _block_sections(
+    label: str, blocks: list[str]
+) -> tuple[tuple[str, str], ...]:
+    """Label each offending code block for AssertionFailure ``sections``."""
+    return tuple((label, block) for block in blocks)
+
+
+def _leaking_pure_blocks(text: str) -> list[str]:
+    """Candidate pure-core blocks containing at least one I/O token."""
+    return [b for b in _candidate_pure_blocks(text) if _leaking_tokens(b)]
+
+
+# ---------------------------------------------------------------------------
 # Assertion functions
 # ---------------------------------------------------------------------------
 
 
 def assert_introduces_pure_function(run: EvalRun) -> None:
     """Fail if the refactor adds no new named or arrow function."""
-    assert _new_function_names(run.assistant_text), (
-        "expected refactor to introduce at least one new named function "
-        "alongside processOrder; saw none"
-    )
+    if not _new_function_names(run.assistant_text):
+        raise AssertionFailure(
+            "expected refactor to introduce at least one new named function "
+            "alongside processOrder; saw none",
+            sections=_reply_sections(run),
+        )
 
 
 def assert_pure_core_no_io(run: EvalRun) -> None:
     """Fail if no pure-core block is found, or if one leaks I/O tokens."""
-    assert _candidate_pure_blocks(run.assistant_text), (
-        "no candidate pure-core block found in claude output"
-    )
+    if not _candidate_pure_blocks(run.assistant_text):
+        raise AssertionFailure(
+            "no candidate pure-core block found in the model output",
+            sections=_reply_sections(run),
+        )
     leaks = _io_leaks_in_pure_blocks(run.assistant_text)
-    assert not leaks, "pure-core block(s) leak I/O tokens: " + ", ".join(
-        f"{tok!r} in '{snippet}'" for tok, snippet in leaks
-    )
+    if leaks:
+        raise AssertionFailure(
+            "pure-core block(s) leak I/O tokens: "
+            + ", ".join(f"{tok!r} in '{snippet}'" for tok, snippet in leaks),
+            sections=_block_sections(
+                "Leaking pure-core block",
+                _leaking_pure_blocks(run.assistant_text),
+            ),
+        )
 
 
 def assert_shell_preserves_io(run: EvalRun) -> None:
     """Fail if the imperative shell drops any of the required I/O calls."""
     missing = _missing_io_calls(run.assistant_text)
-    assert not missing, f"shell missing I/O calls: {missing}"
+    if missing:
+        raise AssertionFailure(
+            f"shell missing I/O calls: {missing}",
+            sections=_reply_sections(run),
+        )
 
 
 def assert_preserves_discount_rules(run: EvalRun) -> None:
     """Fail if discount tiers or percentages are missing from the refactor."""
     missing = _missing_discount_elements(run.assistant_text)
-    assert not missing, f"discount rules missing from refactor: {missing}"
+    if missing:
+        raise AssertionFailure(
+            f"discount rules missing from refactor: {missing}",
+            sections=_reply_sections(run),
+        )
 
 
 def assert_alert_decision_extracted(run: EvalRun) -> None:
     """Fail if the alert decision is not expressed as kind-tagged data."""
-    assert _has_kind_discriminator(run.assistant_text), (
-        "expected alert decision expressed as data (e.g. discriminated union "
-        "with a 'kind' field) returned by a pure function"
-    )
+    if not _has_kind_discriminator(run.assistant_text):
+        raise AssertionFailure(
+            "expected alert decision expressed as data (e.g. discriminated "
+            "union with a 'kind' field) returned by a pure function",
+            sections=_reply_sections(run),
+        )
 
 
 def assert_adds_retry_loop(run: EvalRun) -> None:
@@ -203,45 +284,62 @@ def assert_adds_retry_loop(run: EvalRun) -> None:
         r"\bbackoff\b",
         r"\bretry\b",
     )
-    assert any(
+    if not any(
         re.search(p, run.assistant_text, re.IGNORECASE) for p in patterns
-    ), "no retry loop, retry helper, or backoff logic introduced"
+    ):
+        raise AssertionFailure(
+            "no retry loop, retry helper, or backoff logic introduced",
+            sections=_reply_sections(run),
+        )
 
 
 def assert_preserves_compensation(run: EvalRun) -> None:
     """Fail if saga compensation calls (refund/release) are dropped."""
     text = run.assistant_text
-    assert "paymentApi.refund" in text, (
-        "compensation lost: paymentApi.refund missing"
-    )
-    assert "fulfillmentApi.release" in text, (
-        "compensation lost: fulfillmentApi.release missing"
-    )
+    if "paymentApi.refund" not in text:
+        raise AssertionFailure(
+            "compensation lost: paymentApi.refund missing",
+            sections=_reply_sections(run),
+        )
+    if "fulfillmentApi.release" not in text:
+        raise AssertionFailure(
+            "compensation lost: fulfillmentApi.release missing",
+            sections=_reply_sections(run),
+        )
 
 
 def assert_no_pure_core_extraction(run: EvalRun) -> None:
     """Fail if FCIS framing or a pure-decision function appears."""
     text_lc = run.assistant_text.lower()
-    assert "// pure core" not in text_lc, (
-        "saga refactor introduced a '// pure core' marker; "
-        "FCIS shouldn't apply here"
-    )
-    assert "functional core" not in text_lc, (
-        "saga refactor uses 'functional core' framing; "
-        "FCIS shouldn't apply here"
-    )
+    if PURE_CORE_MARK_RE.search(run.assistant_text):
+        raise AssertionFailure(
+            "saga refactor introduced a '// pure core' marker; "
+            "FCIS shouldn't apply here",
+            sections=_reply_sections(run),
+        )
+    if "functional core" in text_lc:
+        raise AssertionFailure(
+            "saga refactor uses 'functional core' framing; "
+            "FCIS shouldn't apply here",
+            sections=_reply_sections(run),
+        )
     matches = _suspicious_saga_fn_names(run.assistant_text)
-    assert not matches, (
-        f"saga shouldn't grow a pure-core decision function, found: {matches}"
-    )
+    if matches:
+        raise AssertionFailure(
+            "saga shouldn't grow a pure-core decision function, "
+            f"found: {matches}",
+            sections=_reply_sections(run),
+        )
 
 
 def assert_skill_not_invoked(run: EvalRun) -> None:
     """Fail if the FCIS skill was invoked when it should have stayed silent."""
-    assert not run.skill_invoked, (
-        "FCIS skill was invoked on the saga prompt; "
-        "this is the When-NOT-to-use case"
-    )
+    if run.skill_invoked:
+        raise AssertionFailure(
+            "FCIS skill was invoked on the saga prompt; "
+            "this is the When-NOT-to-use case",
+            sections=(("Tool uses", str(run.tool_uses)),),
+        )
 
 
 ASSERTION_HANDLERS = {
