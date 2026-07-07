@@ -29,11 +29,11 @@ class TestCodeBlocks:
             "before\n```typescript\nconst x = 1;\n```\n"
             "between\n```ts\nconst y = 2;\n```\nafter"
         )
-        assert _code_blocks(text) == ["const x = 1;\n", "const y = 2;\n"]
+        assert _code_blocks(text) == ["const x = 1;", "const y = 2;"]
 
     def test_extracts_unlabelled_blocks(self) -> None:
         text = "```\nconst z = 3;\n```"
-        assert _code_blocks(text) == ["const z = 3;\n"]
+        assert _code_blocks(text) == ["const z = 3;"]
 
 
 class TestIsCandidatePureBlock:
@@ -65,7 +65,7 @@ class TestCandidatePureBlocks:
     def test_includes_matching_block(self) -> None:
         text = "```ts\nfunction decide(x: number) { return x > 0; }\n```"
         assert _candidate_pure_blocks(text) == [
-            "function decide(x: number) { return x > 0; }\n"
+            "function decide(x: number) { return x > 0; }"
         ]
 
     def test_excludes_non_matching_block(self) -> None:
@@ -272,6 +272,57 @@ class TestAssertPureCoreNoIo:
             ("Assistant reply", "prose only, no code blocks"),
         )
 
+    def test_passes_for_decorated_marker_with_async_shell(self) -> None:
+        # Decoration-tolerant markers ('// --- pure core: ... ---') must
+        # still scope the scan to the marked region, leaving the async
+        # shell that follows untouched.
+        run = EvalRun(
+            eval_id="t",
+            prompt="",
+            skill_invoked=True,
+            assistant_text=(
+                "```typescript\n"
+                "// --- pure core: data in, data out, no I/O ---\n"
+                "function decide(o: { total: number }) {\n"
+                "  return o.total > 1000 ? 'large' : 'small';\n"
+                "}\n"
+                "// --- end pure core ---\n"
+                "export async function processOrder() {\n"
+                "  await db.getOrder();\n"
+                "}\n"
+                "```"
+            ),
+        )
+        assert_pure_core_no_io(run)
+
+    def test_fails_when_decorated_marked_region_awaits(self) -> None:
+        # The decoration-tolerant marker must still scope the leak scan to
+        # the marked region itself, not just find it.
+        run = EvalRun(
+            eval_id="t",
+            prompt="",
+            skill_invoked=True,
+            assistant_text=(
+                "```typescript\n"
+                "// --- pure core: data in, data out, no I/O ---\n"
+                "function decide(o: { id: string }) {\n"
+                "  const row = await db.getOrder(o.id);\n"
+                "  return row;\n"
+                "}\n"
+                "// --- end pure core ---\n"
+                "export async function processOrder() {\n"
+                "  await db.getOrder();\n"
+                "}\n"
+                "```"
+            ),
+        )
+        with pytest.raises(
+            AssertionFailure, match="leak I/O tokens"
+        ) as exc:
+            assert_pure_core_no_io(run)
+        assert exc.value.sections[0][0] == "Leaking pure-core block"
+        assert "db.getOrder" in exc.value.sections[0][1]
+
 
 class TestAssertNoPureCoreExtraction:
     def test_flags_pure_core_marker(self) -> None:
@@ -281,6 +332,22 @@ class TestAssertNoPureCoreExtraction:
             skill_invoked=False,
             assistant_text=(
                 "```ts\n// pure core\nfunction f() {}\n// end pure core\n```"
+            ),
+        )
+        with pytest.raises(AssertionError, match="pure core"):
+            assert_no_pure_core_extraction(run)
+
+    def test_flags_decorated_pure_core_marker(self) -> None:
+        run = EvalRun(
+            eval_id="t",
+            prompt="",
+            skill_invoked=False,
+            assistant_text=(
+                "```typescript\n"
+                "// --- pure core ---\n"
+                "function f() {}\n"
+                "// --- end pure core ---\n"
+                "```"
             ),
         )
         with pytest.raises(AssertionError, match="pure core"):

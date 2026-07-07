@@ -11,7 +11,9 @@ from binom_eval import (
     ARROW_FN_RE,
     NAMED_FN_RE,
     code_blocks as _code_blocks,
+    comment_mark_re as _comment_mark_re,
     first_line as _first_line,
+    marked_regions as _marked_regions,
     missing_from as _missing_from,
 )
 
@@ -32,14 +34,14 @@ PURE_CORE_IO_TOKENS = (
 
 ASYNC_FN_RE = re.compile(r"\basync\s+(?:function|\()")
 
-# Marked pure-core region per the SKILL convention: '// pure core ...' up to
-# '// end pure core', or to the end of the block when the close marker is
-# omitted. Complete-file responses carry the shell in the same code block, so
-# only the marked region -- not the whole block -- may be held to purity.
-PURE_CORE_REGION_RE = re.compile(
-    r"//\s*pure\s+core[^\n]*\n(.*?)(?://\s*end\s+pure\s+core|\Z)",
-    re.IGNORECASE | re.DOTALL,
-)
+# Marked pure-core region per the SKILL convention: a decoration-tolerant
+# '// ... pure core ...' opener (e.g. '// --- pure core: data in ---') up to
+# '// ... end pure core', or to the end of the block when the close marker
+# is omitted. Complete-file responses carry the shell in the same code
+# block, so only the marked region -- not the whole block -- may be held to
+# purity. See binom_eval.comment_mark_re / marked_regions for the matching
+# rules.
+PURE_CORE_MARK_RE = _comment_mark_re("pure core")
 
 _LINE_COMMENT_RE = re.compile(r"//[^\n]*")
 _BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
@@ -66,11 +68,11 @@ def _is_candidate_pure_block(block: str) -> bool:
     """Return True if the block looks like a pure-core function.
 
     A block qualifies if it is a sync named/arrow function, or is
-    explicitly marked with '// pure core'.
+    explicitly marked with a (decoration-tolerant) '// pure core' comment.
     """
     return any(
         [
-            "// pure core" in block.lower(),
+            bool(PURE_CORE_MARK_RE.search(block)),
             all(
                 [
                     not ASYNC_FN_RE.search(block),
@@ -94,13 +96,14 @@ def _strip_comments(code: str) -> str:
 def _candidate_pure_blocks(text: str) -> list[str]:
     """Extract the pure-core candidate regions from the code blocks.
 
-    Blocks carrying a '// pure core' marker contribute only their marked
-    regions (a complete-file block also contains the shell); unmarked
-    blocks qualify wholesale when they look like a sync function.
+    Blocks carrying a (decoration-tolerant) '// pure core' marker
+    contribute only their marked regions (a complete-file block also
+    contains the shell); unmarked blocks qualify wholesale when they look
+    like a sync function.
     """
     candidates: list[str] = []
     for block in _code_blocks(text):
-        regions = PURE_CORE_REGION_RE.findall(block)
+        regions = _marked_regions(block, "pure core")
         if regions:
             candidates.extend(regions)
         elif _is_candidate_pure_block(block):
@@ -308,7 +311,7 @@ def assert_preserves_compensation(run: EvalRun) -> None:
 def assert_no_pure_core_extraction(run: EvalRun) -> None:
     """Fail if FCIS framing or a pure-decision function appears."""
     text_lc = run.assistant_text.lower()
-    if "// pure core" in text_lc:
+    if PURE_CORE_MARK_RE.search(run.assistant_text):
         raise AssertionFailure(
             "saga refactor introduced a '// pure core' marker; "
             "FCIS shouldn't apply here",

@@ -213,7 +213,7 @@ register_live_eval_tests(
 ## How grading works
 
 The verdict is a Beta-binomial posterior over each assertion's true pass rate,
-graded adaptively against a target rate (default **3/5**) over a trial budget
+graded adaptively against a target rate (default **2/3**) over a trial budget
 (default **21**). The model, the verdict band, and the reasoning behind every
 default (`TARGET_RATE`, `MAX_TRIALS`, `BATCH_FLOOR`, the band, the prior, the
 tiebreak) are documented in binom-eval's
@@ -228,10 +228,11 @@ From `skills/` (a `Makefile` wraps the common cases):
 ```sh
 make test                  # everything: unit tests then live evals
 make test-unit             # fast unit tests for all skills, no API calls
-make eval                  # every skill's live evals, in parallel (target 3/5, <=21 runs)
+make eval                  # every skill's live evals, in parallel (target 2/3, <=21 runs)
 make eval-<skill-name>     # one skill's live evals
 make eval TARGET_RATE=0.8 MAX_TRIALS=12
 make eval CONCURRENCY=2    # cap in-flight agent calls (default 5)
+make eval SHOW_POSTERIOR=0 # omit per-check posterior lines from output
 make eval ISOLATE=0        # run in the live tree (no per-trial copy)
 make eval MODEL=claude:haiku   # pick another backend:model
 ```

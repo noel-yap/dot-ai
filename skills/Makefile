@@ -27,10 +27,11 @@
 # Run from this directory (skills/). Examples:
 #   make test                 # everything: unit tests then claude evals
 #   make test-unit            # fast unit tests only, no API calls
-#   make eval                 # all skills' claude evals in parallel (target 3/5, <=21 runs)
+#   make eval                 # all skills' claude evals in parallel (target 2/3, <=21 runs)
 #   make eval-dependency-injection
 #   make eval TARGET_RATE=0.8 MAX_TRIALS=12
 #   make eval CONCURRENCY=2   # cap in-flight `claude -p` calls (default 5)
+#   make eval SHOW_POSTERIOR=0  # omit P(rate >= p0 | k, n) lines from output
 #   make eval MODEL=claude:haiku   # or any backend:model; see MODEL below
 #   make eval ISOLATE=0       # run in the live tree (no per-trial copy)
 #   make test-unit PYTEST_ARGS="-v"
@@ -43,7 +44,10 @@ SHELL := bash
 # whatever is installed in the invoking shell's environment.
 PYTEST      ?= uv run pytest
 MAX_TRIALS  ?= 21
-TARGET_RATE ?= 0.6
+# True pass rate a good skill should clear (`--live-eval-target-rate`).
+TARGET_RATE ?= $(shell awk 'BEGIN{print 2/3}')
+# Print P(rate >= p0 | k, n) for each passing check (`--live-eval-show-posterior`).
+SHOW_POSTERIOR ?= 1
 # Ceiling on concurrent `claude -p` calls across the whole eval session,
 # passed through to binom-eval's `--live-eval-concurrency`. One shared
 # in-process semaphore bounds load and API-rate pressure no matter how many
@@ -81,7 +85,9 @@ $(SH_KEYRING):
 UNIT_FLAGS := -m "not live_eval"
 # `--live-eval-isolate` unless ISOLATE=0 (any non-zero value keeps it on).
 ISOLATE_FLAG := $(if $(filter-out 0,$(ISOLATE)),--live-eval-isolate,)
-EVAL_FLAGS := -m live_eval --live-eval-model $(MODEL) --live-eval-max-trials $(MAX_TRIALS) --live-eval-target-rate $(TARGET_RATE) --live-eval-concurrency $(CONCURRENCY) --live-eval-failure-max-chars=0 $(ISOLATE_FLAG)
+# `--live-eval-show-posterior` unless SHOW_POSTERIOR=0.
+SHOW_POSTERIOR_FLAG := $(if $(filter-out 0,$(SHOW_POSTERIOR)),--live-eval-show-posterior,)
+EVAL_FLAGS := -m live_eval --live-eval-model $(MODEL) --live-eval-max-trials $(MAX_TRIALS) --live-eval-target-rate $(TARGET_RATE) --live-eval-concurrency $(CONCURRENCY) --live-eval-failure-max-chars=0 $(ISOLATE_FLAG) $(SHOW_POSTERIOR_FLAG)
 
 # Eval dirs discovered from the tree, e.g. "dependency-injection/evals".
 SKILL_DIRS := $(patsubst %/,%,$(dir $(wildcard */evals/evals.json)))
@@ -99,7 +105,7 @@ help: ## Show this help
 	@echo ""
 	@echo "Per-skill claude evals: make eval-<skill>"
 	@echo "Discovered skills:      $(SKILLS)"
-	@echo "Vars: MODEL=$(MODEL) MAX_TRIALS=$(MAX_TRIALS) TARGET_RATE=$(TARGET_RATE) CONCURRENCY=$(CONCURRENCY) ISOLATE=$(ISOLATE) PYTEST_ARGS='$(PYTEST_ARGS)'"
+	@echo "Vars: MODEL=$(MODEL) MAX_TRIALS=$(MAX_TRIALS) TARGET_RATE=$(TARGET_RATE) CONCURRENCY=$(CONCURRENCY) ISOLATE=$(ISOLATE) SHOW_POSTERIOR=$(SHOW_POSTERIOR) PYTEST_ARGS='$(PYTEST_ARGS)'"
 
 install: ## Sync the project venv from uv.lock (uv run also does this on demand)
 	uv sync

@@ -52,10 +52,10 @@ class TestCodeBlocks:
             "```typescript\nconst x = 1;\n```\n"
             "between\n```ts\nconst y = 2;\n```"
         )
-        assert _code_blocks(text) == ["const x = 1;\n", "const y = 2;\n"]
+        assert _code_blocks(text) == ["const x = 1;", "const y = 2;"]
 
     def test_extracts_unlabelled_blocks(self) -> None:
-        assert _code_blocks("```\nconst z = 3;\n```") == ["const z = 3;\n"]
+        assert _code_blocks("```\nconst z = 3;\n```") == ["const z = 3;"]
 
 
 class TestIsAfterBlock:
