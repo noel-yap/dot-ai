@@ -17,6 +17,9 @@ Guidance for AI agents working in this repository.
   `skills/README.md` for how to stand up a new skill's eval suite.
 - `commands/` — Claude Code slash commands (`/commit`, `/release`,
   `/unit-test`).
+- `.github/workflows/ci.yml` — CI: unit tests on every push/PR to
+  main; live evals additionally run for pushes and same-repo PRs
+  (fork PRs cannot read the `ANTHROPIC_API_KEY` secret).
 - `vendor/sh-keyring/` — git submodule providing keyring shell helpers
   used by the skills Makefile.
 

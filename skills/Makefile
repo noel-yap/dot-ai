@@ -32,7 +32,7 @@
 #   make eval TARGET_RATE=0.8 MAX_TRIALS=12
 #   make eval CONCURRENCY=2   # cap in-flight `claude -p` calls (default 5)
 #   make eval SHOW_POSTERIOR=0  # omit P(rate >= p0 | k, n) lines from output
-#   make eval MODEL=claude:haiku   # or any backend:model; see MODEL below
+#   make eval MODEL=claude:claude-sonnet-4-6  # or any full claude model id; see MODEL below
 #   make eval ISOLATE=0       # run in the live tree (no per-trial copy)
 #   make test-unit PYTEST_ARGS="-v"
 
@@ -62,20 +62,16 @@ CONCURRENCY ?= 5
 ISOLATE     ?= 1
 # Backend and model for every trial, passed through to binom-eval's
 # `--live-eval-model` (required by the plugin). Must be `backend:model`;
-# known backends are `claude` and `cursor`. The cursor backend drives
-# `cursor-agent` headlessly and authenticates via CURSOR_API_KEY (it runs
-# under a throwaway HOME, so an interactive login is deliberately not used);
-# the eval recipes resolve that key with sh-keyring's `set_key` (see below).
-# Model ids come from `cursor-agent --list-models`. The claude backend needs
-# ANTHROPIC_API_KEY and accepts CLI aliases (haiku, sonnet, opus) as well as
-# full model IDs.
-MODEL       ?= cursor:claude-opus-4-8-high
+# this suite uses the `claude` backend (`claude -p`). The eval recipes
+# resolve ANTHROPIC_API_KEY with sh-keyring's `set_key` (see below).
+# Model id is a full Anthropic model name (e.g. claude-haiku-4-5-20251001).
+MODEL       ?= claude:claude-haiku-4-5-20251001
 PYTEST_ARGS ?=
 
 # sh-keyring is vendored as a git submodule; sourcing it provides `set_key`,
 # which resolves and exports a secret from the env, macOS Keychain, 1Password,
-# or AWS Secrets Manager. The eval recipes use it to resolve CURSOR_API_KEY in
-# the same bash shell that runs pytest, so the live runs inherit the key.
+# or AWS Secrets Manager. The eval recipes use it to resolve ANTHROPIC_API_KEY
+# in the same bash shell that runs pytest, so the live runs inherit the key.
 SH_KEYRING := ../vendor/sh-keyring/sh-keyring.shlib
 
 $(SH_KEYRING):
@@ -115,13 +111,29 @@ test: test-unit eval ## Run everything: unit tests then claude evals (real model
 test-unit: ## Run every skill's unit tests (excludes live_eval)
 	$(PYTEST) . $(UNIT_FLAGS) $(PYTEST_ARGS)
 
-eval: $(SH_KEYRING) ## Run every skill's live evals in parallel (real model calls; set MODEL/MAX_TRIALS/TARGET_RATE/CONCURRENCY)
-	@source '$(SH_KEYRING)' && set_key CURSOR_API_KEY && \
-	$(PYTEST) $(SKILL_DIRS) $(EVAL_FLAGS) $(PYTEST_ARGS)
+eval: ## Run every skill's live evals in parallel (real model calls; set MODEL/MAX_TRIALS/TARGET_RATE/CONCURRENCY)
+	@bash -euo pipefail -c '\
+	  if [ -z "$${ANTHROPIC_API_KEY:-}" ]; then \
+	    test -f "$(SH_KEYRING)" || { echo "Error: $(SH_KEYRING) missing; run git submodule update --init vendor/sh-keyring" >&2; exit 1; }; \
+	    source "$(SH_KEYRING)" && set_key ANTHROPIC_API_KEY; \
+	  fi; \
+	  if [ -z "$${ANTHROPIC_API_KEY:-}" ]; then \
+	    echo "Error: ANTHROPIC_API_KEY is not set. Export it or configure sh-keyring." >&2; \
+	    exit 1; \
+	  fi; \
+	  exec $(PYTEST) $(SKILL_DIRS) $(EVAL_FLAGS) $(PYTEST_ARGS)'
 
-eval-%: $(SH_KEYRING) ## Run live evals for one skill: make eval-<skill>
-	@source '$(SH_KEYRING)' && set_key CURSOR_API_KEY && \
-	$(PYTEST) "$*/evals" $(EVAL_FLAGS) $(PYTEST_ARGS)
+eval-%: ## Run live evals for one skill: make eval-<skill>
+	@bash -euo pipefail -c '\
+	  if [ -z "$${ANTHROPIC_API_KEY:-}" ]; then \
+	    test -f "$(SH_KEYRING)" || { echo "Error: $(SH_KEYRING) missing; run git submodule update --init vendor/sh-keyring" >&2; exit 1; }; \
+	    source "$(SH_KEYRING)" && set_key ANTHROPIC_API_KEY; \
+	  fi; \
+	  if [ -z "$${ANTHROPIC_API_KEY:-}" ]; then \
+	    echo "Error: ANTHROPIC_API_KEY is not set. Export it or configure sh-keyring." >&2; \
+	    exit 1; \
+	  fi; \
+	  exec $(PYTEST) "$*/evals" $(EVAL_FLAGS) $(PYTEST_ARGS)'
 
 clean: ## Remove install stamps and pytest / __pycache__ caches under skills/
 	rm -f .install.stamp .install.*.stamp

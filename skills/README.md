@@ -234,20 +234,16 @@ make eval TARGET_RATE=0.8 MAX_TRIALS=12
 make eval CONCURRENCY=2    # cap in-flight agent calls (default 5)
 make eval SHOW_POSTERIOR=0 # omit per-check posterior lines from output
 make eval ISOLATE=0        # run in the live tree (no per-trial copy)
-make eval MODEL=claude:haiku   # pick another backend:model
+make eval MODEL=claude:claude-sonnet-4-6  # pick another full model id
 ```
 
 Trials run on the backend and model in `MODEL` (default
-`cursor:claude-opus-4-8-high`, i.e. `cursor-agent` driving Opus 4.8). The
-cursor backend needs the `cursor-agent` CLI on `PATH` and authenticates via
-`CURSOR_API_KEY` — live runs execute under a throwaway `HOME`, so an
-interactive login is deliberately not used. The eval targets resolve that key
-with `set_key` from [sh-keyring](https://github.com/noel-yap/sh-keyring)
-(vendored as a git submodule at `vendor/sh-keyring`), which checks the env,
-the macOS Keychain, 1Password, and AWS Secrets Manager in that order. Model
-ids come from `cursor-agent --list-models`.
-The claude backend (`MODEL=claude:<model>`) runs `claude -p` with isolated
-settings (`--bare`) and authenticates only via `ANTHROPIC_API_KEY`.
+`claude:claude-haiku-4-5-20251001`). Live evals use `claude -p` with isolated
+settings (`--bare`) and authenticate only via `ANTHROPIC_API_KEY`. The
+eval targets resolve that key with `set_key` from
+[sh-keyring](https://github.com/noel-yap/sh-keyring) (vendored as a git
+submodule at `vendor/sh-keyring`), which checks the env, the macOS Keychain,
+1Password, and AWS Secrets Manager in that order.
 
 `make eval` runs every skill's trials concurrently under binom-eval's built-in
 parallelism: one shared in-process semaphore (`--live-eval-concurrency`,
