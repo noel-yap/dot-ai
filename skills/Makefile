@@ -111,13 +111,29 @@ test: test-unit eval ## Run everything: unit tests then claude evals (real model
 test-unit: ## Run every skill's unit tests (excludes live_eval)
 	$(PYTEST) . $(UNIT_FLAGS) $(PYTEST_ARGS)
 
-eval: $(SH_KEYRING) ## Run every skill's live evals in parallel (real model calls; set MODEL/MAX_TRIALS/TARGET_RATE/CONCURRENCY)
-	@source '$(SH_KEYRING)' && set_key ANTHROPIC_API_KEY && \
-	$(PYTEST) $(SKILL_DIRS) $(EVAL_FLAGS) $(PYTEST_ARGS)
+eval: ## Run every skill's live evals in parallel (real model calls; set MODEL/MAX_TRIALS/TARGET_RATE/CONCURRENCY)
+	@bash -euo pipefail -c '\
+	  if [ -z "$${ANTHROPIC_API_KEY:-}" ]; then \
+	    test -f "$(SH_KEYRING)" || { echo "Error: $(SH_KEYRING) missing; run git submodule update --init vendor/sh-keyring" >&2; exit 1; }; \
+	    source "$(SH_KEYRING)" && set_key ANTHROPIC_API_KEY; \
+	  fi; \
+	  if [ -z "$${ANTHROPIC_API_KEY:-}" ]; then \
+	    echo "Error: ANTHROPIC_API_KEY is not set. Export it or configure sh-keyring." >&2; \
+	    exit 1; \
+	  fi; \
+	  exec $(PYTEST) $(SKILL_DIRS) $(EVAL_FLAGS) $(PYTEST_ARGS)'
 
-eval-%: $(SH_KEYRING) ## Run live evals for one skill: make eval-<skill>
-	@source '$(SH_KEYRING)' && set_key ANTHROPIC_API_KEY && \
-	$(PYTEST) "$*/evals" $(EVAL_FLAGS) $(PYTEST_ARGS)
+eval-%: ## Run live evals for one skill: make eval-<skill>
+	@bash -euo pipefail -c '\
+	  if [ -z "$${ANTHROPIC_API_KEY:-}" ]; then \
+	    test -f "$(SH_KEYRING)" || { echo "Error: $(SH_KEYRING) missing; run git submodule update --init vendor/sh-keyring" >&2; exit 1; }; \
+	    source "$(SH_KEYRING)" && set_key ANTHROPIC_API_KEY; \
+	  fi; \
+	  if [ -z "$${ANTHROPIC_API_KEY:-}" ]; then \
+	    echo "Error: ANTHROPIC_API_KEY is not set. Export it or configure sh-keyring." >&2; \
+	    exit 1; \
+	  fi; \
+	  exec $(PYTEST) "$*/evals" $(EVAL_FLAGS) $(PYTEST_ARGS)'
 
 clean: ## Remove install stamps and pytest / __pycache__ caches under skills/
 	rm -f .install.stamp .install.*.stamp
