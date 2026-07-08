@@ -18,7 +18,6 @@ from ._assertions import (
     _introduces_di_interface,
     _introduces_injection_seam,
     _introduces_narrow_interface,
-    _is_after_block,
     _preserves_region_rule,
     _substring_leaks,
     assert_composition_root_present,
@@ -32,7 +31,14 @@ from ._assertions import (
     assert_sut_has_no_bare_globals,
     assert_sut_has_no_bare_module_refs,
 )
-from binom_eval import AssertionFailure, EvalRun
+from binom_eval import (
+    AssertionFailure,
+    BEGIN_AFTER_MARKER,
+    BEGIN_BEFORE_MARKER,
+    END_AFTER_MARKER,
+    END_BEFORE_MARKER,
+    EvalRun,
+)
 
 
 def _run(text: str, skill_invoked: bool = False) -> EvalRun:
@@ -58,39 +64,35 @@ class TestCodeBlocks:
         assert _code_blocks("```\nconst z = 3;\n```") == ["const z = 3;"]
 
 
-class TestIsAfterBlock:
-    def test_marked_after_is_after(self) -> None:
-        assert _is_after_block("// AFTER\nfunction foo() {}\n")
-
-    def test_marked_before_is_not_after(self) -> None:
-        assert not _is_after_block("// BEFORE\nfunction foo() {}\n")
-
-    def test_unmarked_is_not_after(self) -> None:
-        assert not _is_after_block("function foo() {}\n")
-
-    def test_sut_marker_counts_as_after(self) -> None:
-        assert _is_after_block("// SUT (under test)\nclass C {}\n")
+def _after_block(body: str) -> str:
+    return (
+        "```ts\n"
+        f"{BEGIN_AFTER_MARKER}\n{body}\n{END_AFTER_MARKER}\n"
+        "```"
+    )
 
 
 class TestCandidateSutBlocks:
     def test_prefers_explicit_sut_markers(self) -> None:
         text = (
             "```ts\n"
-            "// BEFORE\nasync function foo() { await db.x(); }\n"
+            f"{BEGIN_BEFORE_MARKER}\nasync function foo() {{ await db.x(); }}\n"
+            f"{END_BEFORE_MARKER}\n"
             "```\n"
             "```ts\n"
-            "// AFTER\n// SUT (under test)\n"
+            f"{BEGIN_AFTER_MARKER}\n// SUT (under test)\n"
             "class C { run() { return this.dep.x(); } }\n"
             "// end SUT (under test)\n"
+            f"{END_AFTER_MARKER}\n"
             "```\n"
         )
         blocks = _candidate_sut_blocks(text)
         assert len(blocks) == 1
         assert "this.dep.x" in blocks[0]
-        assert "BEFORE" not in blocks[0]
+        assert "BEGIN BEFORE" not in blocks[0]
 
-    def test_falls_back_to_after_block_when_no_sut_marker(self) -> None:
-        text = "```ts\n// AFTER\nclass C { run() {} }\n```"
+    def test_falls_back_to_after_snippet_when_no_sut_marker(self) -> None:
+        text = _after_block("class C { run() {} }")
         assert len(_candidate_sut_blocks(text)) == 1
 
 
@@ -324,21 +326,14 @@ class TestHasCompositionRoot:
 
 class TestHasProductionDefaultDep:
     def test_arrow_default_date_now(self) -> None:
-        text = (
-            "```ts\n"
-            "// AFTER\n"
+        text = _after_block(
             "class C { "
-            "constructor(private clock: Clock = () => Date.now()) {} }\n"
-            "```"
+            "constructor(private clock: Clock = () => Date.now()) {} }"
         )
         assert _has_production_default_dep(text)
 
     def test_no_default(self) -> None:
-        text = (
-            "```ts\n// AFTER\n"
-            "class C { constructor(private clock: Clock) {} }\n"
-            "```"
-        )
+        text = _after_block("class C { constructor(private clock: Clock) {} }")
         assert not _has_production_default_dep(text)
 
 
@@ -426,13 +421,11 @@ class TestAssertIntroducesInjectionSeam:
 
 class TestAssertSutHasNoBareGlobals:
     def test_passes_when_clean(self) -> None:
-        text = (
-            "```ts\n// AFTER\nclass C { run() { return this.clock(); } }\n```"
-        )
+        text = _after_block("class C { run() { return this.clock(); } }")
         assert_sut_has_no_bare_globals(_run(text))
 
     def test_fails_on_date_now_leak(self) -> None:
-        text = "```ts\n// AFTER\nclass C { run() { return Date.now(); } }\n```"
+        text = _after_block("class C { run() { return Date.now(); } }")
         with pytest.raises(
             AssertionFailure, match="bare global I/O tokens"
         ) as exc:
@@ -450,15 +443,11 @@ class TestAssertSutHasNoBareGlobals:
 
 class TestAssertSutHasNoBareModuleRefs:
     def test_passes_with_member_access(self) -> None:
-        text = (
-            "```ts\n"
-            "// AFTER\nclass C { async run() { await this.db.x(); } }\n"
-            "```"
-        )
+        text = _after_block("class C { async run() { await this.db.x(); } }")
         assert_sut_has_no_bare_module_refs(_run(text))
 
     def test_fails_on_bare_db(self) -> None:
-        text = "```ts\n// AFTER\nclass C { async run() { await db.x(); } }\n```"
+        text = _after_block("class C { async run() { await db.x(); } }")
         with pytest.raises(AssertionError, match="bare module references"):
             assert_sut_has_no_bare_module_refs(_run(text))
 
@@ -524,17 +513,13 @@ class TestAssertNarrowDepsInterface:
 
 class TestAssertNoProductionDefaultDeps:
     def test_passes_when_no_default(self) -> None:
-        text = (
-            "```ts\n// AFTER\nclass C { constructor(private c: Clock) {} }\n```"
-        )
+        text = _after_block("class C { constructor(private c: Clock) {} }")
         assert_no_production_default_deps(_run(text))
 
     def test_fails_when_default_is_date_now(self) -> None:
-        text = (
-            "```ts\n// AFTER\n"
+        text = _after_block(
             "class C { "
-            "constructor(private c: Clock = () => Date.now()) {} }\n"
-            "```"
+            "constructor(private c: Clock = () => Date.now()) {} }"
         )
         with pytest.raises(AssertionError, match="production-default"):
             assert_no_production_default_deps(_run(text))

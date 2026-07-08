@@ -12,8 +12,10 @@ Guidance for AI agents working in this repository.
   Each skill directory holds a `SKILL.md` (the skill itself), `evals/`
   (live Beta-binomial evals graded by structural assertions), and
   `tests/` (deterministic structural tests of the SKILL.md). Shared
-  assertion/test helpers live in `skills/test_utils.py`; the eval
-  harness comes from the pinned `binom-eval` package. See
+  assertion/test helpers live in `skills/test_utils.py` and
+  `skills/eval_assertion_utils.py` (the latter wraps binom-eval's
+  before/after snippet extraction); the eval harness comes from the
+  pinned `binom-eval` package. See
   `skills/README.md` for how to stand up a new skill's eval suite.
 - `commands/` — Claude Code slash commands (`/commit`, `/release`,
   `/unit-test`).

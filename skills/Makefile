@@ -44,6 +44,8 @@ SHELL := bash
 # whatever is installed in the invoking shell's environment.
 PYTEST      ?= uv run pytest
 MAX_TRIALS  ?= 21
+# Minimum trials before early stopping (`--live-eval-min-trials`).
+MIN_TRIALS  ?= 0
 # True pass rate a good skill should clear (`--live-eval-target-rate`).
 TARGET_RATE ?= $(shell awk 'BEGIN{print 2/3}')
 # Print P(rate >= p0 | k, n) for each passing check (`--live-eval-show-posterior`).
@@ -87,12 +89,11 @@ UNIT_FLAGS := -m "not live_eval"
 ISOLATE_FLAG := $(if $(filter-out 0,$(ISOLATE)),--live-eval-isolate,)
 # `--live-eval-show-posterior` unless SHOW_POSTERIOR=0.
 SHOW_POSTERIOR_FLAG := $(if $(filter-out 0,$(SHOW_POSTERIOR)),--live-eval-show-posterior,)
-EVAL_FLAGS := -m live_eval --live-eval-model $(MODEL) --live-eval-max-trials $(MAX_TRIALS) --live-eval-target-rate $(TARGET_RATE) --live-eval-concurrency $(CONCURRENCY) --live-eval-failure-max-chars=0 $(ISOLATE_FLAG) $(SHOW_POSTERIOR_FLAG)
+EVAL_FLAGS := -m live_eval --live-eval-model $(MODEL) --live-eval-min-trials $(MIN_TRIALS) --live-eval-max-trials $(MAX_TRIALS) --live-eval-target-rate $(TARGET_RATE) --live-eval-concurrency $(CONCURRENCY) --live-eval-failure-max-chars=0 $(ISOLATE_FLAG) $(SHOW_POSTERIOR_FLAG)
 
-# Eval dirs discovered from the tree, e.g. "dependency-injection/evals".
-SKILL_DIRS := $(patsubst %/,%,$(dir $(wildcard */evals/evals.json)))
-# Skill names, e.g. "dependency-injection".
-SKILLS := $(patsubst %/evals,%,$(SKILL_DIRS))
+# Eval dirs pytest collects from (each skill's `evals/` package).
+SKILLS := $(patsubst %/evals/typescript,%,$(wildcard */evals/typescript))
+SKILL_DIRS := $(addsuffix /evals,$(SKILLS))
 
 .DEFAULT_GOAL := help
 
@@ -105,7 +106,7 @@ help: ## Show this help
 	@echo ""
 	@echo "Per-skill claude evals: make eval-<skill>"
 	@echo "Discovered skills:      $(SKILLS)"
-	@echo "Vars: MODEL=$(MODEL) MAX_TRIALS=$(MAX_TRIALS) TARGET_RATE=$(TARGET_RATE) CONCURRENCY=$(CONCURRENCY) ISOLATE=$(ISOLATE) SHOW_POSTERIOR=$(SHOW_POSTERIOR) PYTEST_ARGS='$(PYTEST_ARGS)'"
+	@echo "Vars: MODEL=$(MODEL) MIN_TRIALS=$(MIN_TRIALS) MAX_TRIALS=$(MAX_TRIALS) TARGET_RATE=$(TARGET_RATE) CONCURRENCY=$(CONCURRENCY) ISOLATE=$(ISOLATE) SHOW_POSTERIOR=$(SHOW_POSTERIOR) PYTEST_ARGS='$(PYTEST_ARGS)'"
 
 install: ## Sync the project venv from uv.lock (uv run also does this on demand)
 	uv sync

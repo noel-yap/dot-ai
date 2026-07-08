@@ -61,8 +61,9 @@ standard live-eval pytest nodes — no hand-written test class needed.
 ```
 skills/<skill-name>/
 └── evals/
-    ├── evals.json        # the eval cases + per-eval assertion ids
-    ├── samples/          # input files the prompts point at
+    ├── typescript/
+    │   └── evals.json    # cases + assertion ids (`fixture` paths are relative here)
+    ├── samples/          # input files injected via `{fixture}`
     │   └── *.ts
     ├── _assertions.py    # assertion functions + ASSERTION_HANDLERS registry
     ├── conftest.py       # wires the `eval_runs` fixture
@@ -93,8 +94,8 @@ below), so `evals.json` holds only the cases:
     {
       "id": "descriptive-case-id",
       "should_trigger": true,
-      "file": "skills/<skill-name>/evals/samples/example.ts",
-      "prompt": "A realistic user request that points at the sample file ...",
+      "fixture": "../samples/example.ts",
+      "prompt_template": "A realistic user request about the code below.\n\n```typescript\n{fixture}\n```\n\nIn your final response, include both the original code and the complete refactored TypeScript, each in its own ```typescript code block, even if you also edit files directly.",
       "expected_output": "Prose describing what a good response looks like (human reference; not asserted directly).",
       "assertions": [
         { "id": "some-assertion-id", "description": "What this assertion checks." }
@@ -104,6 +105,12 @@ below), so `evals.json` holds only the cases:
 }
 ```
 
+- `fixture` is a path relative to the `evals/` directory; its contents are
+  injected into `prompt_template` via `{fixture}`. At expansion time
+  binom-eval also appends `BEFORE_AFTER_PROMPT_INSTRUCTION` (the sentinel
+  marker lines for before/after snippets) and, for `should_trigger: true`
+  cases, a constraint naming the only skill that may be used.
+
 - `should_trigger: true` adds an automatic check that the skill's `Skill`
   tool actually fired. Use `should_trigger: false` for a "When NOT to use"
   case and add a `skill-not-invoked` assertion.
@@ -111,7 +118,9 @@ below), so `evals.json` holds only the cases:
   (next step) — `load_evals` enforces this when the `eval_runs` fixture is
   built, raising a `KeyError` that names every gap before any trials run.
   `expected_output` is documentation only.
-- Put the input files the prompt references under `samples/`.
+- Put the input files under `samples/` and reference them from `fixture`.
+- For refactor evals, grade the bracketed before/after snippets with
+  `before_after_snippets` (or the shared `eval_assertion_utils` helpers).
 
 ### 2. `_assertions.py` — the checks
 
@@ -197,7 +206,7 @@ EVAL_DIR = Path(__file__).resolve().parent
 
 register_live_eval_tests(
     globals(),
-    evals_path=EVAL_DIR / "evals.json",
+    evals_path=EVAL_DIR / "typescript/evals.json",
     handlers=ASSERTION_HANDLERS,
     subject_name=EVAL_DIR.parent.name,
     trigger="skill",               # or "agent" for agent suites
@@ -284,7 +293,7 @@ With `-m "not live_eval"` the live evals are excluded, so the unit tests
 
 ## Checklist for a new skill
 
-1. `evals/evals.json` with cases + assertion ids (and `samples/`).
+1. `evals/typescript/evals.json` with cases + assertion ids (and `samples/`).
 2. `_assertions.py` with one handler per assertion id + `ASSERTION_HANDLERS`.
 3. `conftest.py` calling `bind_eval_runs_fixture`.
 4. `test_evals.py` calling `register_live_eval_tests`.

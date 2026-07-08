@@ -30,4 +30,4 @@ dependencies = [
 package = false
 
 [tool.uv.sources]
-binom-eval = { git = "https://github.com/noel-yap/binom-eval", tag = "v1.0.0" }
+binom-eval = { git = "https://github.com/noel-yap/binom-eval", tag = "v1.5.0" }

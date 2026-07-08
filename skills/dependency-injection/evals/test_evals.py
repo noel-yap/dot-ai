@@ -49,7 +49,7 @@ SKILL_NAME = EVAL_DIR.parent.name
 
 register_live_eval_tests(
     globals(),
-    evals_path=EVAL_DIR / "evals.json",
+    evals_path=EVAL_DIR / "typescript/evals.json",
     handlers=ASSERTION_HANDLERS,
     subject_name=SKILL_NAME,
 )

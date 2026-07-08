@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import pytest
-from binom_eval import AssertionFailure, EvalRun
+from binom_eval import (
+    AssertionFailure,
+    BEGIN_AFTER_MARKER,
+    BEGIN_BEFORE_MARKER,
+    END_AFTER_MARKER,
+    END_BEFORE_MARKER,
+    EvalRun,
+)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from eval_assertion_utils import (  # noqa: E402
+    before_snippet,
+    extract_before_after,
+)
 
 from ._assertions import (
-    _after_blocks,
-    _before_blocks,
     _declared_fn_names,
     _new_helper_names,
     assert_adds_empty_input_guard,
@@ -31,8 +46,10 @@ def _run(text: str, skill_invoked: bool = False) -> EvalRun:
 
 def _blocks(before: str, after: str) -> str:
     return (
-        "```typescript\n// BEFORE\n" + before + "\n```\n"
-        "```typescript\n// AFTER\n" + after + "\n```\n"
+        "```typescript\n"
+        f"{BEGIN_BEFORE_MARKER}\n{before}\n{END_BEFORE_MARKER}\n"
+        f"{BEGIN_AFTER_MARKER}\n{after}\n{END_AFTER_MARKER}\n"
+        "```\n"
     )
 
 
@@ -42,24 +59,24 @@ def _blocks(before: str, after: str) -> str:
 
 
 class TestBlockSelection:
-    def test_before_blocks_found_by_marker(self) -> None:
+    def test_before_snippet_found_by_marker(self) -> None:
         text = _blocks("function f() {}", "function f() {}")
-        assert len(_before_blocks(text)) == 1
+        assert before_snippet(text) is not None
 
-    def test_after_blocks_prefer_marker(self) -> None:
+    def test_after_snippet_prefer_marker(self) -> None:
         text = _blocks("function f() {}", "function g() {}")
-        after = _after_blocks(text)
-        assert len(after) == 1
-        assert "function g" in after[0]
+        after = extract_before_after(text)[1]
+        assert after is not None
+        assert "function g" in after
 
-    def test_after_blocks_fall_back_to_non_before(self) -> None:
+    def test_after_snippet_requires_marker(self) -> None:
         text = (
-            "```typescript\n// BEFORE\nfunction f() {}\n```\n"
+            "```typescript\n"
+            f"{BEGIN_BEFORE_MARKER}\nfunction f() {{}}\n{END_BEFORE_MARKER}\n"
+            "```\n"
             "```typescript\nfunction g() {}\n```\n"
         )
-        after = _after_blocks(text)
-        assert len(after) == 1
-        assert "function g" in after[0]
+        assert extract_before_after(text)[1] is None
 
 
 # ---------------------------------------------------------------------------
@@ -69,14 +86,14 @@ class TestBlockSelection:
 
 class TestDeclaredFnNames:
     def test_named_function(self) -> None:
-        assert _declared_fn_names(["function zoneRate() {}"]) == {"zoneRate"}
+        assert _declared_fn_names("function zoneRate() {}") == {"zoneRate"}
 
     def test_const_arrow_function(self) -> None:
-        names = _declared_fn_names(["const baseFare = (x: number) => x * 2;"])
+        names = _declared_fn_names("const baseFare = (x: number) => x * 2;")
         assert names == {"baseFare"}
 
     def test_name_in_comment_is_ignored(self) -> None:
-        assert _declared_fn_names(["// function ghost() {}"]) == set()
+        assert _declared_fn_names("// function ghost() {}") == set()
 
     def test_new_helper_names_subtracts_before(self) -> None:
         run = _run(
@@ -89,7 +106,7 @@ class TestDeclaredFnNames:
 
     def test_new_helper_names_requires_before_block(self) -> None:
         run = _run("```typescript\nfunction g() {}\n```\n")
-        with pytest.raises(AssertionFailure, match="BEFORE"):
+        with pytest.raises(AssertionFailure, match="BEGIN BEFORE"):
             _new_helper_names(run)
 
 
@@ -201,7 +218,7 @@ class TestAssertReducesNesting:
             assert_reduces_nesting(_run(_blocks(same, same)))
 
     def test_fails_without_before_block(self) -> None:
-        with pytest.raises(AssertionFailure, match="BEFORE"):
+        with pytest.raises(AssertionFailure, match="BEGIN BEFORE"):
             assert_reduces_nesting(
                 _run("```typescript\nfunction g() {}\n```\n")
             )

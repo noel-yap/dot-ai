@@ -24,8 +24,10 @@ from ._assertions import ASSERTION_HANDLERS
 EVAL_DIR = Path(__file__).resolve().parent
 SKILL_NAME = EVAL_DIR.parent.name
 
+EVAL_LANG_DIR = EVAL_DIR / "typescript"
+
 eval_runs = bind_eval_runs_fixture(
-    EVAL_DIR,
+    EVAL_LANG_DIR,
     SKILL_NAME,
     ASSERTION_HANDLERS,
     repo_root=EVAL_DIR.parents[2],
