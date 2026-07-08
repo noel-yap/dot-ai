@@ -34,3 +34,11 @@ make test                  # unit tests then live evals
 ```
 
 Live evals cost API calls; prefer `make test-unit` while iterating.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on push and PRs to `main`: the fast unit
+suite (`make test-unit`) across Python 3.12 and 3.13, then the live evals
+against a pinned Haiku model (needs the `ANTHROPIC_API_KEY` secret). The
+eval job invokes pytest directly rather than `make eval`, since the
+Makefile's `eval` target is bound to the cursor backend via sh-keyring.
