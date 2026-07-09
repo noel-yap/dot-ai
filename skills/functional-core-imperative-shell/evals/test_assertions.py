@@ -4,23 +4,32 @@ from __future__ import annotations
 
 import pytest
 from ._assertions import (
-    _block_has_kind_discriminator,
-    _candidate_pure_blocks,
+    _alert_returned_as_data,
+    _candidate_pure_functions,
     _code_blocks,
-    _has_kind_discriminator,
-    _io_leaks_in_pure_blocks,
-    _is_candidate_pure_block,
-    _leaking_tokens,
+    _io_leaks_in_pure_functions,
     _missing_discount_elements,
     _missing_from,
     _missing_io_calls,
     _new_function_names,
     _suspicious_saga_fn_names,
+    assert_alert_decision_extracted,
     assert_no_pure_core_extraction,
     assert_pure_core_no_io,
     assert_skill_not_invoked,
 )
 from binom_eval import AssertionFailure, EvalRun
+
+
+def _after(body: str) -> str:
+    """Wrap an AFTER snippet in a sentinel-delimited TypeScript block."""
+    return (
+        "```typescript\n"
+        "// <<<BEGIN AFTER>>> //\n"
+        f"{body}\n"
+        "// <<<END AFTER>>> //\n"
+        "```"
+    )
 
 
 class TestCodeBlocks:
@@ -36,49 +45,12 @@ class TestCodeBlocks:
         assert _code_blocks(text) == ["const z = 3;"]
 
 
-class TestIsCandidatePureBlock:
-    def test_async_without_marker_returns_false(self) -> None:
-        assert not _is_candidate_pure_block(
-            "async function foo() { await bar(); }\n"
-        )
-
-    def test_sync_named_function_returns_true(self) -> None:
-        assert _is_candidate_pure_block(
-            "function decide(x: number) { return x > 0; }\n"
-        )
-
-    def test_pure_core_marker_returns_true_even_if_async(self) -> None:
-        assert _is_candidate_pure_block(
-            "// pure core\nasync function broken() { await x(); }\n"
-        )
-
-    def test_no_function_definition_returns_false(self) -> None:
-        assert not _is_candidate_pure_block("const x: number = 1;\n")
-
-    def test_arrow_function_returns_true(self) -> None:
-        assert _is_candidate_pure_block(
-            "const decide = (x: number) => x > 0;\n"
-        )
-
-
-class TestCandidatePureBlocks:
-    def test_includes_matching_block(self) -> None:
-        text = "```ts\nfunction decide(x: number) { return x > 0; }\n```"
-        assert _candidate_pure_blocks(text) == [
-            "function decide(x: number) { return x > 0; }"
-        ]
-
-    def test_excludes_non_matching_block(self) -> None:
-        text = "```ts\nasync function foo() { await bar(); }\n```"
-        assert _candidate_pure_blocks(text) == []
-
-
 class TestNewFunctionNames:
     def test_empty_text_returns_empty_set(self) -> None:
         assert _new_function_names("") == set()
 
     def test_excludes_shell_function(self) -> None:
-        text = "```ts\nfunction processOrder(id: string) {}\n```"
+        text = "```ts\nasync function processOrder(id: string) {}\n```"
         assert _new_function_names(text) == set()
 
     def test_includes_non_shell_named_fn(self) -> None:
@@ -90,57 +62,56 @@ class TestNewFunctionNames:
         assert _new_function_names(text) == {"decide"}
 
 
-class TestLeakingTokens:
-    def test_clean_block_returns_empty(self) -> None:
-        assert _leaking_tokens("const x = 1;") == []
+class TestCandidatePureFunctions:
+    def test_excludes_async_shell_and_process_order(self) -> None:
+        text = _after(
+            "function calculateDiscount(o) { return 0; }\n"
+            "async function processOrder(id) { await db.get(id); }"
+        )
+        assert [fn.name for fn in _candidate_pure_functions(text)] == [
+            "calculateDiscount"
+        ]
 
-    def test_detects_await(self) -> None:
-        assert "await " in _leaking_tokens("const r = await fetch(url);")
-
-    def test_detects_db_prefix(self) -> None:
-        assert "db." in _leaking_tokens("const row = db.getOrder(id);")
+    def test_no_functions_returns_empty(self) -> None:
+        assert _candidate_pure_functions("prose only, no code") == []
 
 
-class TestIoLeaksInPureBlocks:
-    def test_no_code_blocks_returns_empty(self) -> None:
-        assert _io_leaks_in_pure_blocks("no code blocks here") == []
+class TestIoLeaksInPureFunctions:
+    def test_no_functions_returns_empty(self) -> None:
+        assert _io_leaks_in_pure_functions("no code blocks here") == []
 
-    def test_marked_region_in_complete_file_scopes_scan(self) -> None:
-        # A complete-file response carries the async shell in the same
-        # block; only the marked pure-core region may be held to purity.
+    def test_async_shell_is_not_scanned(self) -> None:
+        # The async shell may perform I/O; only pure functions are held to it.
         text = (
             "```ts\n"
-            "// pure core\n"
-            "function decide(o: Order) { return o.total > 100; }\n"
-            "// end pure core\n"
-            "async function processOrder(id: string) {\n"
+            "function decide(o) { return o.total > 100; }\n"
+            "async function processOrder(id) {\n"
             "  const o = await db.getOrder(id);\n"
             "  if (decide(o)) await emailService.send(o.email);\n"
             "}\n"
             "```"
         )
-        assert _io_leaks_in_pure_blocks(text) == []
+        assert _io_leaks_in_pure_functions(text) == []
 
     def test_comment_mentions_of_io_are_not_leaks(self) -> None:
         text = (
             "```ts\n"
-            "// pure core: no more await db. or emailService. calls here\n"
-            "function decide(o: Order) { return o.total > 100; }\n"
-            "// end pure core\n"
+            "function decide(o) {\n"
+            "  // no more await db. or emailService. calls here\n"
+            "  return o.total > 100;\n"
+            "}\n"
             "```"
         )
-        assert _io_leaks_in_pure_blocks(text) == []
+        assert _io_leaks_in_pure_functions(text) == []
 
-    def test_leaky_pure_block_returns_token_snippet_pairs(self) -> None:
+    def test_leaky_pure_function_returns_token_snippet_pairs(self) -> None:
         text = (
             "```ts\n"
-            "// pure core\n"
-            "function decide(id: string) { return await db.getOrder(id); }\n"
+            "function decide(id) { return await db.getOrder(id); }\n"
             "```"
         )
-        leaks = _io_leaks_in_pure_blocks(text)
-        tokens = [tok for tok, _ in leaks]
-        assert "await " in tokens
+        tokens = [tok for tok, _ in _io_leaks_in_pure_functions(text)]
+        assert "await" in tokens
         assert "db." in tokens
 
 
@@ -179,27 +150,6 @@ class TestMissingDiscountElements:
         assert "15" in _missing_discount_elements(text)
 
 
-class TestBlockHasKindDiscriminator:
-    def test_union_literal(self) -> None:
-        assert _block_has_kind_discriminator('const a = { kind: "large" };')
-
-    def test_type_form(self) -> None:
-        assert _block_has_kind_discriminator("type Alert = { kind: string; }")
-
-    def test_absent_returns_false(self) -> None:
-        assert not _block_has_kind_discriminator(
-            "const x = { label: 'large' };"
-        )
-
-
-class TestHasKindDiscriminator:
-    def test_no_code_blocks_returns_false(self) -> None:
-        assert not _has_kind_discriminator("no code here")
-
-    def test_matching_block_returns_true(self) -> None:
-        assert _has_kind_discriminator('```ts\nreturn { kind: "large" };\n```')
-
-
 class TestSuspiciousSagaFnNames:
     def test_empty_returns_empty(self) -> None:
         assert _suspicious_saga_fn_names("") == []
@@ -220,7 +170,7 @@ class TestSuspiciousSagaFnNames:
 
 
 class TestAssertPureCoreNoIo:
-    def test_passes_for_clean_block(self) -> None:
+    def test_passes_for_clean_function(self) -> None:
         run = EvalRun(
             eval_id="t",
             prompt="",
@@ -235,14 +185,13 @@ class TestAssertPureCoreNoIo:
         )
         assert_pure_core_no_io(run)
 
-    def test_fails_when_block_awaits(self) -> None:
+    def test_fails_when_pure_function_awaits(self) -> None:
         run = EvalRun(
             eval_id="t",
             prompt="",
             skill_invoked=True,
             assistant_text=(
                 "```ts\n"
-                "// pure core\n"
                 "function decide(o: { id: string }) {\n"
                 "  const row = await db.getOrder(o.id);\n"
                 "  return row;\n"
@@ -250,43 +199,37 @@ class TestAssertPureCoreNoIo:
                 "```"
             ),
         )
-        with pytest.raises(
-            AssertionFailure, match="leak I/O tokens"
-        ) as exc:
+        with pytest.raises(AssertionFailure, match="leak I/O tokens") as exc:
             assert_pure_core_no_io(run)
-        assert exc.value.sections[0][0] == "Leaking pure-core block"
+        assert exc.value.sections[0][0] == "Leaking pure-core function"
         assert "db.getOrder" in exc.value.sections[0][1]
 
-    def test_no_candidate_block_attaches_reply_section(self) -> None:
+    def test_no_candidate_attaches_reply_section(self) -> None:
         run = EvalRun(
             eval_id="t",
             prompt="",
             skill_invoked=True,
             assistant_text="prose only, no code blocks",
         )
-        with pytest.raises(
-            AssertionFailure, match="no candidate"
-        ) as exc:
+        with pytest.raises(AssertionFailure, match="no candidate") as exc:
             assert_pure_core_no_io(run)
         assert exc.value.sections == (
             ("Assistant reply", "prose only, no code blocks"),
         )
 
-    def test_passes_for_decorated_marker_with_async_shell(self) -> None:
-        # Decoration-tolerant markers ('// --- pure core: ... ---') must
-        # still scope the scan to the marked region, leaving the async
-        # shell that follows untouched.
+    def test_async_shell_alongside_pure_core_passes(self) -> None:
+        # The complete refactor carries the async shell in the same block;
+        # only the pure functions are held to purity, so the shell's I/O is
+        # not a leak.
         run = EvalRun(
             eval_id="t",
             prompt="",
             skill_invoked=True,
             assistant_text=(
                 "```typescript\n"
-                "// --- pure core: data in, data out, no I/O ---\n"
                 "function decide(o: { total: number }) {\n"
                 "  return o.total > 1000 ? 'large' : 'small';\n"
                 "}\n"
-                "// --- end pure core ---\n"
                 "export async function processOrder() {\n"
                 "  await db.getOrder();\n"
                 "}\n"
@@ -295,33 +238,70 @@ class TestAssertPureCoreNoIo:
         )
         assert_pure_core_no_io(run)
 
-    def test_fails_when_decorated_marked_region_awaits(self) -> None:
-        # The decoration-tolerant marker must still scope the leak scan to
-        # the marked region itself, not just find it.
+
+class TestAssertAlertDecisionExtracted:
+    def test_passes_for_kind_union(self) -> None:
         run = EvalRun(
             eval_id="t",
             prompt="",
             skill_invoked=True,
-            assistant_text=(
-                "```typescript\n"
-                "// --- pure core: data in, data out, no I/O ---\n"
-                "function decide(o: { id: string }) {\n"
-                "  const row = await db.getOrder(o.id);\n"
-                "  return row;\n"
-                "}\n"
-                "// --- end pure core ---\n"
-                "export async function processOrder() {\n"
-                "  await db.getOrder();\n"
-                "}\n"
-                "```"
+            assistant_text=_after(
+                'type Alert = { kind: "none" } | { kind: "large"; email: string };\n'
+                "function decideAlert(o) {\n"
+                '  if (o.total > 1000) return { kind: "large", email: o.email };\n'
+                '  return { kind: "none" };\n'
+                "}"
             ),
         )
-        with pytest.raises(
-            AssertionFailure, match="leak I/O tokens"
-        ) as exc:
-            assert_pure_core_no_io(run)
-        assert exc.value.sections[0][0] == "Leaking pure-core block"
-        assert "db.getOrder" in exc.value.sections[0][1]
+        assert_alert_decision_extracted(run)
+
+    def test_passes_for_nullable_struct(self) -> None:
+        run = EvalRun(
+            eval_id="t",
+            prompt="",
+            skill_invoked=True,
+            assistant_text=_after(
+                "function determineAlert(o, f, d) {\n"
+                '  if (f > 1000) return { subject: "x", body: "y" };\n'
+                "  return null;\n"
+                "}"
+            ),
+        )
+        assert_alert_decision_extracted(run)
+
+    def test_passes_for_optional_field_struct(self) -> None:
+        run = EvalRun(
+            eval_id="t",
+            prompt="",
+            skill_invoked=True,
+            assistant_text=_after(
+                "function calculateOrderDecision(o) {\n"
+                "  let alert;\n"
+                '  if (o.total > 1000) alert = { subject: "x", message: "y" };\n'
+                "  return { discountPct: 0, finalTotal: 1, alert };\n"
+                "}"
+            ),
+        )
+        assert_alert_decision_extracted(run)
+
+    def test_fails_when_decision_stays_in_shell(self) -> None:
+        run = EvalRun(
+            eval_id="t",
+            prompt="",
+            skill_invoked=True,
+            assistant_text=_after(
+                "export async function processOrder(id) {\n"
+                "  const o = await db.getOrder(id);\n"
+                "  if (o.total > 1000)\n"
+                '    await emailService.send(o.email, "Large order alert", "b");\n'
+                "}"
+            ),
+        )
+        with pytest.raises(AssertionFailure, match="alert decision"):
+            assert_alert_decision_extracted(run)
+
+    def test_helper_false_without_pure_decision(self) -> None:
+        assert not _alert_returned_as_data("prose only, no code")
 
 
 class TestAssertNoPureCoreExtraction:

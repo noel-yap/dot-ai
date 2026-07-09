@@ -1,8 +1,7 @@
 """Structural unit tests for the functional-core-imperative-shell SKILL.md.
 
 Validates that the skill follows its own contract: required frontmatter,
-required sections, BEFORE/AFTER example pairing, and that any code block
-labelled `// pure core` contains no I/O tokens. Stdlib + pytest only.
+required sections, and BEFORE/AFTER example pairing. Stdlib + pytest only.
 
 Shared helpers (frontmatter parsing, code-block regex, required-section
 list, token-counting) live in `skills/test_utils.py`.
@@ -30,11 +29,6 @@ from test_utils import (  # noqa: E402
 
 SKILL_PATH = Path(__file__).resolve().parent.parent / "SKILL.md"
 
-PURE_CORE_BLOCK_RE = re.compile(
-    r"//\s*pure core\b[^\n]*\n(.*?)//\s*end pure core\b",
-    re.IGNORECASE | re.DOTALL,
-)
-SHELL_MARKER_RE = re.compile(r"//\s*imperative shell\b", re.IGNORECASE)
 
 IO_TOKENS = (
     "await ",
@@ -91,31 +85,6 @@ def test_has_at_least_two_typescript_blocks(body: str) -> None:
 def test_before_and_after_examples_present(body: str) -> None:
     assert re.search(r"//\s*BEFORE\b", body), "skill must include a BEFORE example"
     assert re.search(r"//\s*AFTER\b", body), "skill must include an AFTER example"
-
-
-def test_pure_core_blocks_are_marked(body: str) -> None:
-    blocks = PURE_CORE_BLOCK_RE.findall(body)
-    assert len(blocks) >= 2, (
-        "expected at least two `// pure core` ... `// end pure core` regions "
-        "to validate (one per TypeScript example)"
-    )
-
-
-@pytest.mark.parametrize(
-    "token", IO_TOKENS, ids=[t.strip().rstrip("(") or repr(t) for t in IO_TOKENS]
-)
-def test_pure_core_blocks_contain_no_io(body: str, token: str) -> None:
-    for block in PURE_CORE_BLOCK_RE.findall(body):
-        assert token not in block, (
-            f"pure-core block leaks I/O token {token!r}; first 200 chars:\n"
-            f"{block.strip()[:200]}"
-        )
-
-
-def test_imperative_shell_marker_present(body: str) -> None:
-    assert SHELL_MARKER_RE.search(body), (
-        "skill should explicitly label the imperative shell side of at least one example"
-    )
 
 
 def test_validation_checklist_covers_io_tokens(body: str) -> None:

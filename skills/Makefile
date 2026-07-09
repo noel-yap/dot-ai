@@ -62,22 +62,17 @@ CONCURRENCY ?= 5
 # permanently mutate the fixtures under version control. On by default; set
 # ISOLATE=0 only for read-only skills where the per-trial copy isn't worth it.
 ISOLATE     ?= 1
-# Backend and model for every trial, passed through to binom-eval's
-# `--live-eval-model` (required by the plugin). Must be `backend:model`;
-# known backends are `claude` and `cursor`. The cursor backend drives
-# `cursor-agent` headlessly and authenticates via CURSOR_API_KEY (it runs
-# under a throwaway HOME, so an interactive login is deliberately not used);
-# the eval recipes resolve that key with sh-keyring's `set_key` (see below).
-# Model ids come from `cursor-agent --list-models`. The claude backend needs
-# ANTHROPIC_API_KEY and accepts CLI aliases (haiku, sonnet, opus) as well as
-# full model IDs.
-MODEL       ?= cursor:claude-opus-4-8-high
+# Model for every trial, passed through to binom-eval's `--live-eval-model`
+# (required by the plugin). Runs the `claude` backend (`claude -p`), which
+# authenticates via ANTHROPIC_API_KEY; the value is `claude:<model>` where
+# <model> is a CLI alias (haiku, sonnet, opus) or a full model ID.
+MODEL       ?= claude:claude-sonnet-5
 PYTEST_ARGS ?=
 
 # sh-keyring is vendored as a git submodule; sourcing it provides `set_key`,
 # which resolves and exports a secret from the env, macOS Keychain, 1Password,
-# or AWS Secrets Manager. The eval recipes use it to resolve CURSOR_API_KEY in
-# the same bash shell that runs pytest, so the live runs inherit the key.
+# or AWS Secrets Manager. Eval recipes call it to resolve ANTHROPIC_API_KEY in
+# the same bash shell that runs pytest, so live runs inherit the key.
 SH_KEYRING := ../vendor/sh-keyring/sh-keyring.shlib
 
 $(SH_KEYRING):
@@ -116,12 +111,12 @@ test: test-unit eval ## Run everything: unit tests then claude evals (real model
 test-unit: ## Run every skill's unit tests (excludes live_eval)
 	$(PYTEST) . $(UNIT_FLAGS) $(PYTEST_ARGS)
 
-eval: $(SH_KEYRING) ## Run every skill's live evals in parallel (real model calls; set MODEL/MAX_TRIALS/TARGET_RATE/CONCURRENCY)
-	@source '$(SH_KEYRING)' && set_key CURSOR_API_KEY && \
+eval: $(SH_KEYRING) ## Run every skill's live evals in parallel (needs ANTHROPIC_API_KEY; set MODEL/MAX_TRIALS/TARGET_RATE/CONCURRENCY)
+	@source '$(SH_KEYRING)' && set_key ANTHROPIC_API_KEY && \
 	$(PYTEST) $(SKILL_DIRS) $(EVAL_FLAGS) $(PYTEST_ARGS)
 
 eval-%: $(SH_KEYRING) ## Run live evals for one skill: make eval-<skill>
-	@source '$(SH_KEYRING)' && set_key CURSOR_API_KEY && \
+	@source '$(SH_KEYRING)' && set_key ANTHROPIC_API_KEY && \
 	$(PYTEST) "$*/evals" $(EVAL_FLAGS) $(PYTEST_ARGS)
 
 clean: ## Remove install stamps and pytest / __pycache__ caches under skills/

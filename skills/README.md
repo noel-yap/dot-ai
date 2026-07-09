@@ -120,7 +120,9 @@ below), so `evals.json` holds only the cases:
   `expected_output` is documentation only.
 - Put the input files under `samples/` and reference them from `fixture`.
 - For refactor evals, grade the bracketed before/after snippets with
-  `before_after_snippets` (or the shared `eval_assertion_utils` helpers).
+  `before_after_snippets` (or the shared `eval_assertion_utils` helpers);
+  for structural checks (functions, I/O calls, returned-data shapes) parse
+  the code with `ts_ast` rather than matching regexes.
 
 ### 2. `_assertions.py` — the checks
 
@@ -243,20 +245,14 @@ make eval TARGET_RATE=0.8 MAX_TRIALS=12
 make eval CONCURRENCY=2    # cap in-flight agent calls (default 5)
 make eval SHOW_POSTERIOR=0 # omit per-check posterior lines from output
 make eval ISOLATE=0        # run in the live tree (no per-trial copy)
-make eval MODEL=claude:haiku   # pick another backend:model
+make eval MODEL=claude:opus     # run against a different model
 ```
 
-Trials run on the backend and model in `MODEL` (default
-`cursor:claude-opus-4-8-high`, i.e. `cursor-agent` driving Opus 4.8). The
-cursor backend needs the `cursor-agent` CLI on `PATH` and authenticates via
-`CURSOR_API_KEY` — live runs execute under a throwaway `HOME`, so an
-interactive login is deliberately not used. The eval targets resolve that key
-with `set_key` from [sh-keyring](https://github.com/noel-yap/sh-keyring)
-(vendored as a git submodule at `vendor/sh-keyring`), which checks the env,
-the macOS Keychain, 1Password, and AWS Secrets Manager in that order. Model
-ids come from `cursor-agent --list-models`.
-The claude backend (`MODEL=claude:<model>`) runs `claude -p` with isolated
-settings (`--bare`) and authenticates only via `ANTHROPIC_API_KEY`.
+Trials run on the claude backend and the model in `MODEL` (default
+`claude:claude-sonnet-5`). The value is `claude:<model>`, where
+<model> is a CLI alias (`haiku`, `sonnet`, `opus`) or a full model ID. The
+claude backend runs `claude -p` with isolated settings (`--bare`) and
+authenticates via `ANTHROPIC_API_KEY`.
 
 `make eval` runs every skill's trials concurrently under binom-eval's built-in
 parallelism: one shared in-process semaphore (`--live-eval-concurrency`,

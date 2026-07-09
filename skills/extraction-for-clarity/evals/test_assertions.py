@@ -174,9 +174,58 @@ export function quote(x: number, zone: string): number {
 """
 
 
+# A `name-the-conditional` refactor that names each rule with an explaining
+# variable rather than an extracted function -- a first-class clarity move
+# the grader must credit the same as function extraction. Mirrors the shape
+# of a real model response to the document_permissions fixture.
+BEFORE_CONDITIONAL = """
+export function canEditDocument(user: User, doc: Doc): boolean {
+  return (
+    !user.suspended &&
+    doc.status !== "archived" &&
+    (user.role === "admin"
+      ? !doc.locked || doc.ownerId === user.id
+      : user.role === "editor"
+        ? !doc.locked &&
+          (doc.ownerId === user.id ||
+            (doc.allowTeamEdits &&
+              user.teamIds.includes(doc.teamId) &&
+              doc.status === "draft"))
+        : false)
+  );
+}
+"""
+
+AFTER_CONDITIONAL_VARS = """
+export function canEditDocument(user: User, doc: Doc): boolean {
+  const userIsActive = !user.suspended;
+  const documentIsEditable = doc.status !== "archived";
+  const isOwner = doc.ownerId === user.id;
+  const canEditAsTeamMember =
+    doc.allowTeamEdits &&
+    user.teamIds.includes(doc.teamId) &&
+    doc.status === "draft";
+  const adminCanEdit = !doc.locked || isOwner;
+  const editorCanEdit = !doc.locked && (isOwner || canEditAsTeamMember);
+  const roleGrantsEditPermission =
+    user.role === "admin"
+      ? adminCanEdit
+      : user.role === "editor"
+        ? editorCanEdit
+        : false;
+  return userIsActive && documentIsEditable && roleGrantsEditPermission;
+}
+"""
+
+
 class TestAssertExtractsNamedHelpers:
     def test_passes_with_two_new_helpers(self) -> None:
         assert_extracts_named_helpers(_run(_blocks(BEFORE_TANGLE, AFTER_CLEAN)))
+
+    def test_passes_with_explaining_variables(self) -> None:
+        assert_extracts_named_helpers(
+            _run(_blocks(BEFORE_CONDITIONAL, AFTER_CONDITIONAL_VARS))
+        )
 
     def test_fails_with_no_new_helpers(self) -> None:
         text = _blocks("function f() {}", "function f() { return 1; }")
@@ -190,11 +239,24 @@ class TestAssertHelperNamesAreDescriptive:
             _run(_blocks(BEFORE_TANGLE, AFTER_CLEAN))
         )
 
+    def test_passes_with_explaining_variable_names(self) -> None:
+        assert_helper_names_are_descriptive(
+            _run(_blocks(BEFORE_CONDITIONAL, AFTER_CONDITIONAL_VARS))
+        )
+
     def test_fails_on_vague_name(self) -> None:
         text = _blocks(
             "function f() {}",
             "function helper1() {}\nfunction zoneSurcharge() {}\n"
             "function bulkDiscount() {}",
+        )
+        with pytest.raises(AssertionFailure, match="vague"):
+            assert_helper_names_are_descriptive(_run(text))
+
+    def test_fails_on_vague_explaining_variable(self) -> None:
+        text = _blocks(
+            "function f() {}",
+            "const data = a === b;\nconst tmp = c && d;",
         )
         with pytest.raises(AssertionFailure, match="vague"):
             assert_helper_names_are_descriptive(_run(text))
@@ -246,10 +308,26 @@ class TestAssertExtractsBooleanPredicates:
         )
         assert_extracts_boolean_predicates(_run(text))
 
+    def test_passes_with_predicate_explaining_variable(self) -> None:
+        assert_extracts_boolean_predicates(
+            _run(_blocks(BEFORE_CONDITIONAL, AFTER_CONDITIONAL_VARS))
+        )
+
     def test_fails_without_predicate_names(self) -> None:
         text = _blocks(
             "function f() {}",
             "function ownerCheck() {}\nfunction teamCheck() {}",
+        )
+        with pytest.raises(AssertionFailure, match="predicate"):
+            assert_extracts_boolean_predicates(_run(text))
+
+    def test_fails_when_explaining_variables_are_not_predicate_named(
+        self,
+    ) -> None:
+        text = _blocks(
+            "function f() {}",
+            "const ownerMatch = d.ownerId === u.id;\n"
+            "const teamMatch = d.teamId === u.teamId;",
         )
         with pytest.raises(AssertionFailure, match="predicate"):
             assert_extracts_boolean_predicates(_run(text))

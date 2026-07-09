@@ -1,50 +1,42 @@
-"""FCIS refactor-quality assertion functions and their supporting helpers."""
+"""FCIS refactor-quality assertion functions and their supporting helpers.
+
+Structural checks -- function extraction, I/O detection, returned-data shape,
+discriminated unions -- run on a tree-sitter TypeScript parse via the shared
+`ts_ast` module, so a check reflects the code's parse tree rather than surface
+text. Presence checks for preserved rules and the saga When-NOT-to-use
+guardrails stay as text scans.
+"""
 
 from __future__ import annotations
 
-import itertools
 import re
+import sys
+from pathlib import Path
 
 from binom_eval import (
     AssertionFailure,
     EvalRun,
-    ARROW_FN_RE,
-    NAMED_FN_RE,
     code_blocks as _code_blocks,
     comment_mark_re as _comment_mark_re,
-    first_line as _first_line,
-    marked_regions as _marked_regions,
     missing_from as _missing_from,
 )
+
+# Add `skills/` to sys.path so shared modules are importable regardless of
+# where pytest is invoked from.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+import ts_ast  # noqa: E402
+from eval_assertion_utils import after_snippet  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-PURE_CORE_IO_TOKENS = (
-    "await ",
-    "db.",
-    "fetch(",
-    "Date.now(",
-    "Math.random(",
-    "process.env",
-    "console.",
-    "emailService.",
-)
-
-ASYNC_FN_RE = re.compile(r"\basync\s+(?:function|\()")
-
-# Marked pure-core region per the SKILL convention: a decoration-tolerant
-# '// ... pure core ...' opener (e.g. '// --- pure core: data in ---') up to
-# '// ... end pure core', or to the end of the block when the close marker
-# is omitted. Complete-file responses carry the shell in the same code
-# block, so only the marked region -- not the whole block -- may be held to
-# purity. See binom_eval.comment_mark_re / marked_regions for the matching
-# rules.
+# A stray '// pure core' comment is a misapplication signal on the saga
+# (When-NOT-to-use) case: a decoration-tolerant '// ... pure core ...' match
+# flags a response that wrongly reached for FCIS. Purity of the positive
+# refactor is judged structurally (see `ts_ast`), not from this marker.
 PURE_CORE_MARK_RE = _comment_mark_re("pure core")
-
-_LINE_COMMENT_RE = re.compile(r"//[^\n]*")
-_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 
 _SHELL_FN_NAMES = frozenset({"processOrder"})
 _REQUIRED_SHELL_IO_CALLS = (
@@ -54,103 +46,93 @@ _REQUIRED_SHELL_IO_CALLS = (
 )
 _REQUIRED_TIER_NAMES = ("platinum", "gold", "itemcount")
 _REQUIRED_DISCOUNT_PCTS = ("15", "10", "5")
-_KIND_UNION_RE = re.compile(r"\bkind\s*:\s*['\"][\w-]+['\"]")
-_KIND_TYPE_RE = re.compile(r"\btype\s+\w+\s*=[^;]*kind\s*:", re.DOTALL)
 _SUSPICIOUS_SAGA_FN_RE = re.compile(r"function\s+(decide\w+|plan\w*Saga)\b")
 
-
-# ---------------------------------------------------------------------------
-# Low-level helpers
-# ---------------------------------------------------------------------------
-
-
-def _is_candidate_pure_block(block: str) -> bool:
-    """Return True if the block looks like a pure-core function.
-
-    A block qualifies if it is a sync named/arrow function, or is
-    explicitly marked with a (decoration-tolerant) '// pure core' comment.
-    """
-    return any(
-        [
-            bool(PURE_CORE_MARK_RE.search(block)),
-            all(
-                [
-                    not ASYNC_FN_RE.search(block),
-                    any(r.search(block) for r in (NAMED_FN_RE, ARROW_FN_RE)),
-                ]
-            ),
-        ]
-    )
-
-
-def _strip_comments(code: str) -> str:
-    """Drop // line comments and /* */ block comments before token scans.
-
-    Prose in comments legitimately mentions I/O collaborators ("the
-    decisions no longer touch db or emailService"), so only code may
-    trip the leak tokens.
-    """
-    return _LINE_COMMENT_RE.sub("", _BLOCK_COMMENT_RE.sub("", code))
-
-
-def _candidate_pure_blocks(text: str) -> list[str]:
-    """Extract the pure-core candidate regions from the code blocks.
-
-    Blocks carrying a (decoration-tolerant) '// pure core' marker
-    contribute only their marked regions (a complete-file block also
-    contains the shell); unmarked blocks qualify wholesale when they look
-    like a sync function.
-    """
-    candidates: list[str] = []
-    for block in _code_blocks(text):
-        regions = _marked_regions(block, "pure core")
-        if regions:
-            candidates.extend(regions)
-        elif _is_candidate_pure_block(block):
-            candidates.append(block)
-    return candidates
+# An alert decision returned as data is an object literal carrying the alert
+# payload -- a subject plus a body/message -- regardless of the wrapper
+# (nullable struct, optional field, or discriminated union).
+_ALERT_PAYLOAD_KEYSETS = ({"subject", "body"}, {"subject", "message"})
 
 
 # ---------------------------------------------------------------------------
-# Data helpers
+# Code extraction
+# ---------------------------------------------------------------------------
+
+
+def _refactored_code(text: str) -> str:
+    """The AFTER snippet if the sentinels delimit one, else all fenced code.
+
+    Refactor-quality checks target the refactored code, so grade the AFTER
+    region when present; the fallback keeps marker-less unit inputs working.
+    """
+    after = after_snippet(text)
+    if after is not None:
+        return after
+    return "\n".join(_code_blocks(text))
+
+
+# ---------------------------------------------------------------------------
+# Structural helpers (tree-sitter)
 # ---------------------------------------------------------------------------
 
 
 def _new_function_names(text: str) -> set[str]:
-    """Collect function identifiers introduced by the refactor.
+    """Names of functions the refactor introduces, excluding the shell."""
+    names = {fn.name for fn in ts_ast.named_functions(_refactored_code(text))}
+    return names - _SHELL_FN_NAMES
 
-    Includes named and arrow functions, excluding known shell functions.
+
+def _candidate_pure_functions(text: str) -> list[ts_ast.Function]:
+    """Functions that should be pure: named, non-async, non-shell.
+
+    The async shell (and the known ``processOrder`` orchestrator) may perform
+    I/O and is excluded; every other introduced function is held to purity.
     """
-    named = {
-        m.group(1)
-        for block in _code_blocks(text)
-        for m in NAMED_FN_RE.finditer(block)
-    } - _SHELL_FN_NAMES
-    arrow = {
-        m.group(1)
-        for block in _code_blocks(text)
-        for m in ARROW_FN_RE.finditer(block)
-    }
-    return named | arrow
+    return [
+        fn
+        for fn in ts_ast.named_functions(_refactored_code(text))
+        if not fn.is_async and fn.name not in _SHELL_FN_NAMES
+    ]
 
 
-def _leaking_tokens(block: str) -> list[str]:
-    """Return which PURE_CORE_IO_TOKENS appear in a code block's code."""
-    code = _strip_comments(block)
-    return list(filter(code.__contains__, PURE_CORE_IO_TOKENS))
+def _io_leaks_in_pure_functions(text: str) -> list[tuple[str, str]]:
+    """(token, first-line snippet) pairs for I/O performed in pure functions."""
+    return [
+        (token, ts_ast.first_line(fn.node))
+        for fn in _candidate_pure_functions(text)
+        for token in ts_ast.io_tokens(fn.node)
+    ]
 
 
-def _io_leaks_in_pure_blocks(text: str) -> list[tuple[str, str]]:
-    """Collect (token, first-line snippet) pairs for leaking I/O tokens.
+def _leaking_pure_functions(text: str) -> list[str]:
+    """Source of each pure-core function that performs I/O."""
+    return [
+        ts_ast.node_text(fn.node)
+        for fn in _candidate_pure_functions(text)
+        if ts_ast.io_tokens(fn.node)
+    ]
 
-    Covers every I/O token found inside a candidate pure-core block.
+
+def _alert_returned_as_data(text: str) -> bool:
+    """True if a pure function returns the alert decision as data.
+
+    Accepts any wrapper: a discriminated union tagged with ``kind``, or a pure
+    function that builds an alert payload object (a subject with a
+    body/message) -- e.g. a nullable struct or an optional field.
     """
-    return list(
-        itertools.chain.from_iterable(
-            ((tok, _first_line(block)) for tok in _leaking_tokens(block))
-            for block in _candidate_pure_blocks(text)
-        )
+    code = _refactored_code(text)
+    if ts_ast.has_kind_discriminant(code):
+        return True
+    return any(
+        ts_ast.builds_object_with_keys(fn.node, keys)
+        for fn in _candidate_pure_functions(text)
+        for keys in _ALERT_PAYLOAD_KEYSETS
     )
+
+
+# ---------------------------------------------------------------------------
+# Text presence helpers
+# ---------------------------------------------------------------------------
 
 
 def _missing_io_calls(text: str) -> list[str]:
@@ -163,19 +145,6 @@ def _missing_discount_elements(text: str) -> list[str]:
     return _missing_from(_REQUIRED_TIER_NAMES, text.lower()) + _missing_from(
         _REQUIRED_DISCOUNT_PCTS, text
     )
-
-
-def _block_has_kind_discriminator(block: str) -> bool:
-    """Return True if the block uses a 'kind' field.
-
-    The 'kind' field is the FCIS idiom for returning a decision as data.
-    """
-    return any(r.search(block) for r in (_KIND_UNION_RE, _KIND_TYPE_RE))
-
-
-def _has_kind_discriminator(text: str) -> bool:
-    """Return True if any code block in text contains a kind discriminator."""
-    return any(map(_block_has_kind_discriminator, _code_blocks(text)))
 
 
 def _suspicious_saga_fn_names(text: str) -> list[str]:
@@ -203,13 +172,8 @@ def _reply_sections(run: EvalRun) -> tuple[tuple[str, str], ...]:
 def _block_sections(
     label: str, blocks: list[str]
 ) -> tuple[tuple[str, str], ...]:
-    """Label each offending code block for AssertionFailure ``sections``."""
+    """Label each offending code region for AssertionFailure ``sections``."""
     return tuple((label, block) for block in blocks)
-
-
-def _leaking_pure_blocks(text: str) -> list[str]:
-    """Candidate pure-core blocks containing at least one I/O token."""
-    return [b for b in _candidate_pure_blocks(text) if _leaking_tokens(b)]
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +182,7 @@ def _leaking_pure_blocks(text: str) -> list[str]:
 
 
 def assert_introduces_pure_function(run: EvalRun) -> None:
-    """Fail if the refactor adds no new named or arrow function."""
+    """Fail if the refactor adds no new named function."""
     if not _new_function_names(run.assistant_text):
         raise AssertionFailure(
             "expected refactor to introduce at least one new named function "
@@ -228,20 +192,20 @@ def assert_introduces_pure_function(run: EvalRun) -> None:
 
 
 def assert_pure_core_no_io(run: EvalRun) -> None:
-    """Fail if no pure-core block is found, or if one leaks I/O tokens."""
-    if not _candidate_pure_blocks(run.assistant_text):
+    """Fail if no pure-core function is found, or if one leaks I/O tokens."""
+    if not _candidate_pure_functions(run.assistant_text):
         raise AssertionFailure(
-            "no candidate pure-core block found in the model output",
+            "no candidate pure-core function found in the model output",
             sections=_reply_sections(run),
         )
-    leaks = _io_leaks_in_pure_blocks(run.assistant_text)
+    leaks = _io_leaks_in_pure_functions(run.assistant_text)
     if leaks:
         raise AssertionFailure(
-            "pure-core block(s) leak I/O tokens: "
+            "pure-core function(s) leak I/O tokens: "
             + ", ".join(f"{tok!r} in '{snippet}'" for tok, snippet in leaks),
             sections=_block_sections(
-                "Leaking pure-core block",
-                _leaking_pure_blocks(run.assistant_text),
+                "Leaking pure-core function",
+                _leaking_pure_functions(run.assistant_text),
             ),
         )
 
@@ -267,8 +231,8 @@ def assert_preserves_discount_rules(run: EvalRun) -> None:
 
 
 def assert_alert_decision_extracted(run: EvalRun) -> None:
-    """Fail if the alert decision is not expressed as kind-tagged data."""
-    if not _has_kind_discriminator(run.assistant_text):
+    """Fail if the alert decision is not returned as data by a pure function."""
+    if not _alert_returned_as_data(run.assistant_text):
         raise AssertionFailure(
             "expected alert decision expressed as data (e.g. discriminated "
             "union with a 'kind' field) returned by a pure function",

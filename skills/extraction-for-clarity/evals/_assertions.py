@@ -18,6 +18,8 @@ from binom_eval import ARROW_FN_RE, AssertionFailure, EvalRun, NAMED_FN_RE
 # where pytest is invoked from.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+import ts_ast  # noqa: E402
+
 from eval_assertion_utils import (  # noqa: E402
     reply_sections,
     require_before_after,
@@ -38,6 +40,10 @@ CAMEL_HUMP_RE = re.compile(r"[a-z][A-Z]")
 
 # Boolean predicate naming convention.
 PREDICATE_NAME_RE = re.compile(r"^(?:is|has|can|should|needs)[A-Z0-9]")
+
+# ALL_CAPS names are magic-number constants, graded by `names-magic-numbers`;
+# they are not counted again as explaining-variable clarity abstractions.
+ALL_CAPS_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 # Distinctive literals from the shipping fixture's rate table. A faithful
 # clarity refactor keeps every value (usually as a named constant); losing
@@ -84,10 +90,35 @@ def _declared_fn_names(code: str) -> set[str]:
     return set(NAMED_FN_RE.findall(stripped)) | set(ARROW_FN_RE.findall(stripped))
 
 
+def _explaining_var_names(code: str) -> set[str]:
+    """Explaining-variable names in ``code`` (ALL_CAPS constants excluded)."""
+    return {
+        b.name
+        for b in ts_ast.explaining_variables(code)
+        if not ALL_CAPS_NAME_RE.match(b.name)
+    }
+
+
+def _named_concept_names(code: str) -> set[str]:
+    """Every named clarity abstraction: extracted functions + explaining vars.
+
+    Grades the *intent* -- giving a buried expression a name -- rather than
+    one implementation of it, so a boolean named as an explaining variable
+    counts the same as a predicate extracted into a function.
+    """
+    return _declared_fn_names(code) | _explaining_var_names(code)
+
+
 def _new_helper_names(run: EvalRun) -> set[str]:
     """Function names declared in AFTER but not in BEFORE."""
     before, after = require_before_after(run)
     return _declared_fn_names(after) - _declared_fn_names(before)
+
+
+def _new_named_concepts(run: EvalRun) -> set[str]:
+    """Named abstractions in AFTER that BEFORE lacked (functions or vars)."""
+    before, after = require_before_after(run)
+    return _named_concept_names(after) - _named_concept_names(before)
 
 
 def _after_text(run: EvalRun) -> str:
@@ -101,37 +132,44 @@ def _after_text(run: EvalRun) -> str:
 
 
 def assert_extracts_named_helpers(run: EvalRun) -> None:
-    """Fail unless the refactor declares >= 2 functions BEFORE lacked."""
-    new_names = _new_helper_names(run)
+    """Fail unless AFTER names >= 2 clarity abstractions BEFORE lacked.
+
+    A named abstraction is an extracted function *or* an explaining
+    variable -- both give a buried expression a name, which is the move
+    this check grades.
+    """
+    new_names = _new_named_concepts(run)
     if len(new_names) < 2:
         raise AssertionFailure(
-            "expected the refactor to extract at least two named helper "
-            f"functions; found {sorted(new_names) or 'none'}",
+            "expected the refactor to introduce at least two named helpers "
+            "(extracted functions or explaining variables); found "
+            f"{sorted(new_names) or 'none'}",
             sections=reply_sections(run),
         )
 
 
 def assert_helper_names_are_descriptive(run: EvalRun) -> None:
-    """Fail when extracted names are vague or not intention-revealing."""
-    new_names = _new_helper_names(run)
+    """Fail when the introduced names are vague or not intention-revealing."""
+    new_names = _new_named_concepts(run)
     if not new_names:
         raise AssertionFailure(
-            "no newly extracted helper functions to evaluate names for",
+            "no newly named helpers or explaining variables to evaluate "
+            "names for",
             sections=reply_sections(run),
         )
     vague = sorted(n for n in new_names if VAGUE_NAME_RE.match(n))
     if vague:
         raise AssertionFailure(
-            "extracted helper name(s) are vague and state no intent: "
+            "introduced name(s) are vague and state no intent: "
             + ", ".join(vague),
             sections=reply_sections(run),
         )
     multi_word = [n for n in new_names if CAMEL_HUMP_RE.search(n)]
     if len(multi_word) < 2:
         raise AssertionFailure(
-            "expected at least two multi-word camelCase helper names "
-            f"(e.g. zoneSurcharge); found {sorted(multi_word) or 'none'} "
-            f"among {sorted(new_names)}",
+            "expected at least two multi-word camelCase names "
+            f"(e.g. zoneSurcharge, canTeamEdit); found "
+            f"{sorted(multi_word) or 'none'} among {sorted(new_names)}",
             sections=reply_sections(run),
         )
 
@@ -166,13 +204,18 @@ def assert_names_magic_numbers(run: EvalRun) -> None:
 
 
 def assert_extracts_boolean_predicates(run: EvalRun) -> None:
-    """Fail unless >= 1 new helper is a predicate (is/has/can/should)."""
-    new_names = _new_helper_names(run)
+    """Fail unless >= 1 new predicate (is/has/can/should) is named.
+
+    The predicate may be an extracted function or a boolean explaining
+    variable; either names the condition so the reader stops decoding it.
+    """
+    new_names = _new_named_concepts(run)
     predicates = sorted(n for n in new_names if PREDICATE_NAME_RE.match(n))
     if not predicates:
         raise AssertionFailure(
-            "expected at least one extracted predicate helper named "
-            f"is*/has*/can*/should*; new helpers were {sorted(new_names)}",
+            "expected at least one extracted predicate named "
+            "is*/has*/can*/should* (function or explaining variable); "
+            f"new names were {sorted(new_names)}",
             sections=reply_sections(run),
         )
 
