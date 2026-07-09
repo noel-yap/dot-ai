@@ -3,8 +3,8 @@
     {
       "id": "mocks-pain",
       "should_trigger": true,
-      "file": "skills/functional-core-imperative-shell/evals/samples/order_processor.ts",
-      "prompt": "I'm trying to write tests for skills/functional-core-imperative-shell/evals/samples/order_processor.ts but every test ends up mocking both the database AND the email service just to verify the discount math. Can you read it and help me make it testable without all those mocks? In your final response, include both the original code before refactoring (labeled with a `// BEFORE` comment) and the complete refactored TypeScript, each in its own ```typescript code block, even if you also edit files directly.",
+      "fixture": "../samples/order_processor.ts",
+      "prompt_template": "I'm trying to write tests for this code but every test ends up mocking both the database AND the email service just to verify the discount math. Can you help me make it testable without all those mocks?\n\n```typescript\n{fixture}\n```\n\nIn your final response, include both the original code before refactoring and the complete refactored TypeScript, each in its own ```typescript code block, even if you also edit files directly.",
       "expected_output": "Claude reads the file, recognises the FCIS smell, and produces a refactor that extracts a pure decision function (e.g. decideDiscount/decideAlert) returning plain data. The pure core has no await/db./emailService./Date.now/Math.random/process.env/console. The original processOrder remains as a thin shell that reads, calls the core, and applies effects.",
       "assertions": [
         {
@@ -28,8 +28,8 @@
     {
       "id": "split-decisions",
       "should_trigger": true,
-      "file": "skills/functional-core-imperative-shell/evals/samples/order_processor.ts",
-      "prompt": "Please split the business decisions from the side effects in skills/functional-core-imperative-shell/evals/samples/order_processor.ts. The decisions about discount tier and which alert to send should not live inside the same function that does database and email I/O. In your final response, include both the original code before refactoring (labeled with a `// BEFORE` comment) and the complete refactored TypeScript, each in its own ```typescript code block, even if you also edit files directly.",
+      "fixture": "../samples/order_processor.ts",
+      "prompt_template": "Please split the business decisions from the side effects in this code. The decisions about discount tier and which alert to send should not live inside the same function that does database and email I/O.\n\n```typescript\n{fixture}\n```\n\nIn your final response, include both the original code before refactoring and the complete refactored TypeScript, each in its own ```typescript code block, even if you also edit files directly.",
       "expected_output": "Claude refactors order_processor.ts into a pure functional core (decideDiscount / decideAlert returning a discriminated union or similar plain-data result) and a thin imperative shell. Pure core has no I/O tokens; shell preserves all original effects.",
       "assertions": [
         {
@@ -53,8 +53,8 @@
     {
       "id": "extract-pure-logic",
       "should_trigger": true,
-      "file": "skills/functional-core-imperative-shell/evals/samples/order_processor.ts",
-      "prompt": "We have a few handlers that all duplicate the discount math from skills/functional-core-imperative-shell/evals/samples/order_processor.ts. Can you extract the pure logic so it can be reused across handlers without dragging the database and email dependencies along? In your final response, include both the original code before refactoring (labeled with a `// BEFORE` comment) and the complete refactored TypeScript, each in its own ```typescript code block, even if you also edit files directly.",
+      "fixture": "../samples/order_processor.ts",
+      "prompt_template": "We have a few handlers that all duplicate the discount math from this code. Can you extract the pure logic so it can be reused across handlers without dragging the database and email dependencies along?\n\n```typescript\n{fixture}\n```\n\nIn your final response, include both the original code before refactoring and the complete refactored TypeScript, each in its own ```typescript code block, even if you also edit files directly.",
       "expected_output": "Claude extracts the discount calculation (and ideally the alert decision) into a pure function that takes the order shape as input and returns plain data. No DB or email dependencies in the extracted function.",
       "assertions": [
         {
@@ -74,8 +74,8 @@
     {
       "id": "saga-retry-backoff",
       "should_trigger": false,
-      "file": "skills/functional-core-imperative-shell/evals/samples/pipeline_coordinator.ts",
-      "prompt": "The payment saga in skills/functional-core-imperative-shell/evals/samples/pipeline_coordinator.ts intermittently fails because fulfillmentApi.reserve times out under load. Add exponential-backoff retry to the fulfillment step (max 3 attempts, base delay 100ms) and keep the existing compensation behaviour intact. In your final response, include both the original code before the change (labeled with a `// BEFORE` comment) and the complete updated TypeScript, each in its own ```typescript code block, even if you also edit files directly.",
+      "fixture": "../samples/pipeline_coordinator.ts",
+      "prompt_template": "The payment saga below intermittently fails because fulfillmentApi.reserve times out under load. Add exponential-backoff retry to the fulfillment step (max 3 attempts, base delay 100ms) and keep the existing compensation behaviour intact.\n\n```typescript\n{fixture}\n```\n\nIn your final response, include both the original code before the change and the complete updated TypeScript, each in its own ```typescript code block, even if you also edit files directly.",
       "expected_output": "Claude adds a retry loop with exponential backoff around the fulfillmentApi.reserve call, preserving the existing try/catch + compensation. The saga structure is unchanged — no extraction of a pure 'core'. The FCIS skill is NOT invoked, because the file is the canonical 'When NOT to use' case (I/O sequence IS the logic).",
       "assertions": [
         {

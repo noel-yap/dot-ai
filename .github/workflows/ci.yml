@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned Anthropic API model id (not the CLI alias `sonnet`).
+  LIVE_EVAL_MODEL: claude:claude-sonnet-5
+
+jobs:
+  test-unit:
+    name: test-unit (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Match `requires-python` in skills/pyproject.toml.
+        python-version: ["3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: skills
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: skills/uv.lock
+
+      - name: Pin Python ${{ matrix.python-version }}
+        run: uv python pin ${{ matrix.python-version }}
+
+      - name: Run fast unit suite
+        run: make test-unit
+
+  eval:
+    name: eval (claude-sonnet-5)
+    runs-on: ubuntu-latest
+    needs: test-unit
+    defaults:
+      run:
+        working-directory: skills
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: skills/uv.lock
+
+      - name: Pin Python 3.12
+        run: uv python pin 3.12
+
+      - name: Install Claude Code CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Claude CLI
+        run: claude --version
+
+      - name: Run live evals
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: make eval MODEL="$LIVE_EVAL_MODEL" SHOW_POSTERIOR=0

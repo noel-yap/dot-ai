@@ -13,6 +13,13 @@ from binom_eval import (
     first_line as _first_line,
 )
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from eval_assertion_utils import after_snippet, reply_sections  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -46,8 +53,9 @@ TYPE_ALIAS_RE = re.compile(r"\btype\s+(\w+)\s*=")
 TEST_HINT_RE = re.compile(r"\b(?:test|it|describe|expect)\s*\(", re.IGNORECASE)
 
 # Marker for the SUT-after-refactor in the model's response, if it follows
-# the SKILL convention. Optional — when absent we fall back to code blocks
-# tagged `// AFTER` (see `_candidate_sut_blocks`).
+# the SKILL convention. Optional — when absent we fall back to the AFTER
+# snippet bracketed by binom-eval's sentinel markers (see
+# `_candidate_sut_blocks`).
 SUT_BLOCK_RE = re.compile(
     r"//\s*SUT[^\n]*\n(.*?)//\s*end\s+SUT",
     re.IGNORECASE | re.DOTALL,
@@ -101,26 +109,18 @@ DEPS_PARAM_ANYWHERE_RE = re.compile(
 # ---------------------------------------------------------------------------
 
 
-def _is_after_block(block: str) -> bool:
-    """A block represents the *refactored* code if it has an AFTER marker
-    or a `// SUT` marker, and does NOT identify itself as the BEFORE."""
-    has_before = bool(re.search(r"//\s*BEFORE\b", block, re.IGNORECASE))
-    has_after_marker = bool(
-        re.search(r"//\s*(?:AFTER|SUT)\b", block, re.IGNORECASE)
-    )
-    return all([not has_before, has_after_marker])
-
-
 def _candidate_sut_blocks(text: str) -> list[str]:
     """Return code regions that represent the refactored unit.
 
     Prefer explicitly-marked `// SUT` ... `// end SUT` regions if present;
-    otherwise fall back to any code block tagged with `// AFTER`.
+    otherwise fall back to the bracketed AFTER snippet from
+    `before_after_snippets`.
     """
     marked = SUT_BLOCK_RE.findall(text)
     if marked:
         return marked
-    return list(filter(_is_after_block, _code_blocks(text)))
+    after = after_snippet(text)
+    return [after] if after else []
 
 
 def _strip_comments(code: str) -> str:
@@ -343,11 +343,6 @@ def _adds_test_code(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _reply_sections(run: EvalRun) -> tuple[tuple[str, str], ...]:
-    """Label the run's full reply for AssertionFailure ``sections``."""
-    return (("Assistant reply", run.assistant_text or "(empty)"),)
-
-
 def _block_sections(
     label: str, blocks: list[str]
 ) -> tuple[tuple[str, str], ...]:
@@ -379,7 +374,7 @@ def assert_introduces_injection_seam(run: EvalRun) -> None:
         raise AssertionFailure(
             "expected refactor to introduce a constructor (or `deps:` "
             "parameter) that names collaborators; saw no injection seam",
-            sections=_reply_sections(run),
+            sections=reply_sections(run),
         )
 
 
@@ -398,7 +393,7 @@ def _assert_sut_free_of(
     if not blocks:
         raise AssertionFailure(
             "no refactored SUT block found in the model output",
-            sections=_reply_sections(run),
+            sections=reply_sections(run),
         )
     leaks = list(
         itertools.chain.from_iterable(
@@ -457,7 +452,7 @@ def assert_preserves_region_rule(run: EvalRun) -> None:
         raise AssertionFailure(
             "refactor lost the region rule: expected both 'Shipped (intl)' "
             "and 'Shipped' to remain in the output",
-            sections=_reply_sections(run),
+            sections=reply_sections(run),
         )
 
 
@@ -470,7 +465,7 @@ def assert_composition_root_present(run: EvalRun) -> None:
             "email, Date.now)`, a `productionDeps = {...}` literal, or a "
             "partially-applied wrapper like `const shipOrderWithDb = "
             "(id) => shipOrder(id, db)`)",
-            sections=_reply_sections(run),
+            sections=reply_sections(run),
         )
 
 
@@ -481,7 +476,7 @@ def assert_narrow_deps_interface(run: EvalRun) -> None:
             "expected at least one named interface or type alias for the "
             "injected collaborators (so the unit depends on a narrow "
             "surface, not the concrete production class)",
-            sections=_reply_sections(run),
+            sections=reply_sections(run),
         )
 
 
@@ -510,7 +505,7 @@ def assert_adds_tests(run: EvalRun) -> None:
         raise AssertionFailure(
             "expected the response to add tests for computeCartTotal "
             "(test/it/describe/expect block); saw none",
-            sections=_reply_sections(run),
+            sections=reply_sections(run),
         )
 
 

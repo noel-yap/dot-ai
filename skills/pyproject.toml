@@ -4,7 +4,7 @@
 # invoking shell's environment.
 #
 # binom-eval supplies the Beta-binomial grading, the live-eval runners
-# (claude / cursor backends), the stream-json parser, and the pytest plugin
+# (claude backend), the stream-json parser, and the pytest plugin
 # (the `--live-eval-*` options, the `live_eval` marker, and the
 # `live_eval_target_rate` fixture). Installing it registers that plugin via
 # its `pytest11` entry point, so no conftest sys.path wiring is needed.
@@ -24,10 +24,12 @@ requires-python = ">=3.12"
 dependencies = [
     "binom-eval",
     "pytest",
+    "tree-sitter>=0.26.0",
+    "tree-sitter-typescript>=0.23.2",
 ]
 
 [tool.uv]
 package = false
 
 [tool.uv.sources]
-binom-eval = { git = "https://github.com/noel-yap/binom-eval", tag = "v1.0.0" }
+binom-eval = { git = "https://github.com/noel-yap/binom-eval", tag = "v1.5.0" }

@@ -89,7 +89,7 @@ pure arithmetic and string selection.
 ```typescript
 // AFTER
 
-// pure core: data in, data out, no I/O
+// functional core: data in, data out, no I/O
 type Alert =
   | { kind: "none" }
   | { kind: "large"; email: string }
@@ -100,7 +100,6 @@ function decideAlert(order: { total: number; country: string; email: string }): 
   if (order.country !== "US") return { kind: "large-international", email: order.email };
   return { kind: "large", email: order.email };
 }
-// end pure core
 
 // imperative shell: reads, calls core, applies effects
 async function processOrder(orderId: string) {
@@ -149,7 +148,7 @@ type LimiterDecision =
   | { kind: "allow"; nextState: LimiterState }
   | { kind: "deny" };
 
-// pure core: state + inputs -> decision + next state
+// functional core: state + inputs -> decision + next state
 function decideLimit(
   state: LimiterState,
   userId: string,
@@ -163,7 +162,6 @@ function decideLimit(
   next.set(userId, [...recent, now]);
   return { kind: "allow", nextState: next };
 }
-// end pure core
 
 // imperative shell: owns the mutable map, the clock, and the logger
 class RateLimiter {
@@ -204,7 +202,7 @@ domain decisions:
    state. Mechanical, driven by what the network told us.
 
 ```typescript
-// pure core: decides WHAT to send (business rules live here)
+// functional core: decides WHAT to send (business rules live here)
 type Notification =
   | { kind: "none" }
   | { kind: "email"; to: string; subject: string; body: string }
@@ -224,7 +222,6 @@ function decideNotification(
     return { kind: "sms", to: user.phone, body };
   return { kind: "none" };
 }
-// end pure core
 
 type Deps = {
   loadUser: (id: string) => Promise<{ prefersChannel: "email" | "sms" | "off"; email?: string; phone?: string }>;
@@ -311,8 +308,7 @@ After refactoring, verify:
 ## Running the skill's own tests
 
 This skill ships with pytest tests that validate its structure (frontmatter,
-required sections, BEFORE/AFTER pairing, and that "pure core" code blocks
-contain no I/O tokens):
+required sections, and BEFORE/AFTER example pairing):
 
 ```bash
 pytest skills/functional-core-imperative-shell/tests
