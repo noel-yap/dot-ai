@@ -8,6 +8,7 @@ allowed-tools:
   - "Bash(git rev-parse:*)"
   - "Bash(git branch:*)"
   - "Bash(git fetch:*)"
+  - "Bash(git remote:*)"
   - "Bash(git push:*)"
   - "Bash(git config:*)"
   - "Bash(git add:*)"
@@ -41,6 +42,7 @@ Determines the next [semantic version](https://semver.org) from the Conventional
    - Latest tag: `git describe --tags --abbrev=0` (no tags yet if it errors).
    - Commits since the latest tag: `git log --no-merges --pretty=format:'%s' <latest-tag>..HEAD`. If there is no tag, use `git log --no-merges --pretty=format:'%s'` for the whole history.
    - Upstream tracking ref: `git rev-parse --abbrev-ref --symbolic-full-name @{u}` (no upstream if it errors).
+   - Tag push remote: `upstream` if `git remote get-url upstream` succeeds; otherwise `origin`.
 2. **Preflight.** Abort and report if any of these hold:
    - The working tree is not clean (`git status --porcelain` is non-empty) — ask the user to commit or stash first.
    - `HEAD` is not on a branch, or the branch is behind/ahead of its upstream in a way that means unpushed/unpulled commits. Run `git fetch` first; if local and upstream have diverged, stop and explain.
@@ -63,7 +65,7 @@ Determines the next [semantic version](https://semver.org) from the Conventional
 8. **Confirm.** Show the user:
    - Current version → next version, and the reason for the chosen bump.
    - Which manifest file(s) will be bumped (or that versioning is tag-derived / no manifest was found, so no bump commit is needed).
-   - The branch the tag will point at and the remote it will be pushed to.
+   - The branch the tag will point at and the remote the tag will be pushed to (from step 1).
    - The drafted release notes that will become the annotated tag message.
    Then ask the user to confirm before proceeding.
 9. **Commit the version bump (if any).** On confirmation, if step 6 edited a manifest, stage exactly those file(s) and commit them as `chore(release): bump version to <version-without-prefix>` (no other changes in this commit). This commit becomes the tag target so the tagged tree carries the matching version. If nothing was edited, skip.
@@ -71,7 +73,7 @@ Determines the next [semantic version](https://semver.org) from the Conventional
    `git tag -a <version> -m "<release notes>"`
 11. **Push.** Push the branch and the tag:
    - `git push` (the branch — required if a bump commit was made or there are other unpushed commits)
-   - `git push origin <version>` (the tag)
+   - `git push <tag-remote> <version>` (the tag — use the tag push remote from step 1: `upstream` when that remote exists, otherwise `origin`)
 12. **Report** the created tag, the commit it points at, the manifest bump (if any), and the remote it was pushed to. If the remote is GitHub: tag-triggered release workflows publish on their own, so check for one (`.github/workflows`) before suggesting anything manual. If there's no release workflow and the user wants a GitHub Release, mention they can run `gh release create <version>` (only run it if they ask).
 
 ## Constraints
