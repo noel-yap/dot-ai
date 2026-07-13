@@ -1,0 +1,17 @@
+# Skill eval-suite dependencies.
+#
+# binom-eval supplies the Beta-binomial grading, the `claude -p` runner, the
+# stream-json parser, and the pytest plugin (the `--live-eval-*` options, the
+# `live_eval` marker, and the `live_eval_target_rate` fixture). Installing it
+# registers that plugin via its `pytest11` entry point, so no conftest sys.path
+# wiring is needed for the eval machinery.
+#
+# Eval parallelism is built into binom-eval: a single in-process semaphore
+# (`--live-eval-concurrency`) caps total in-flight `claude -p` calls across the
+# whole session. binom-eval's README advises against layering pytest-xdist
+# (`-n`) on top -- each worker would get its own semaphore and recompute the
+# session-scoped fixture -- so this suite no longer depends on it.
+#
+# Pinned to a git tag for reproducibility. Bump the tag to upgrade.
+binom-eval @ git+https://github.com/noel-yap/binom-eval@v0.4.0
+pytest-rerunfailures>=14.0
