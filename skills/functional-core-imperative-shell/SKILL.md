@@ -89,7 +89,7 @@ pure arithmetic and string selection.
 ```typescript
 // AFTER
 
-// functional core: data in, data out, no I/O
+// pure core: data in, data out, no I/O
 type Alert =
   | { kind: "none" }
   | { kind: "large"; email: string }
@@ -100,6 +100,7 @@ function decideAlert(order: { total: number; country: string; email: string }): 
   if (order.country !== "US") return { kind: "large-international", email: order.email };
   return { kind: "large", email: order.email };
 }
+// end pure core
 
 // imperative shell: reads, calls core, applies effects
 async function processOrder(orderId: string) {
@@ -148,7 +149,7 @@ type LimiterDecision =
   | { kind: "allow"; nextState: LimiterState }
   | { kind: "deny" };
 
-// functional core: state + inputs -> decision + next state
+// pure core: state + inputs -> decision + next state
 function decideLimit(
   state: LimiterState,
   userId: string,
@@ -162,6 +163,7 @@ function decideLimit(
   next.set(userId, [...recent, now]);
   return { kind: "allow", nextState: next };
 }
+// end pure core
 
 // imperative shell: owns the mutable map, the clock, and the logger
 class RateLimiter {

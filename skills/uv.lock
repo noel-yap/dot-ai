@@ -4,8 +4,8 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "binom-eval"
-version = "1.5.0"
-source = { git = "https://github.com/noel-yap/binom-eval?tag=v1.5.0#b4d142082a8078a2ebb43e326d0d1a7324245e94" }
+version = "2.0.0"
+source = { git = "https://github.com/noel-yap/binom-eval?tag=v2.0.0#f82a7ee99782c92a4213a5d102d64fcde990f4e6" }
 dependencies = [
     { name = "pytest" },
 ]
@@ -84,7 +84,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "binom-eval", git = "https://github.com/noel-yap/binom-eval?tag=v1.5.0" },
+    { name = "binom-eval", git = "https://github.com/noel-yap/binom-eval?tag=v2.0.0" },
     { name = "pytest" },
     { name = "tree-sitter", specifier = ">=0.26.0" },
     { name = "tree-sitter-typescript", specifier = ">=0.23.2" },

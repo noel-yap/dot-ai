@@ -9,13 +9,6 @@ Each skill's `test_skill.py` adds this directory to `sys.path` and
 imports from `test_utils` — see e.g. `dependency-injection/tests/
 test_skill.py` for the import pattern.
 
-The TypeScript-source helpers below (the BEFORE/AFTER markers, the
-function-name / named-constant / vague-name regexes, and the
-comment-and-string-stripping brace-depth scanner) are likewise
-shared: extraction-for-clarity's eval graders
-(`evals/_assertions.py`) and its structure tests import them from
-here so the two suites cannot drift apart.
-
 This module also carries pytest unit tests for the helpers themselves
 (`parse_frontmatter_block`, `extract_frontmatter`, `count_tokens_mentioned`).
 Those tests live with the helpers so a single source of truth covers
@@ -111,6 +104,15 @@ def count_tokens_mentioned(tokens: Iterable[str], text: str) -> int:
     return sum(1 for tok in tokens if tok.strip().rstrip("(") in text)
 
 
+def has_bare_token(block: str, token: str) -> bool:
+    """Return True if `token` appears in `block` not preceded by a `.` or
+    word character — i.e., as a bare identifier rather than a member access.
+
+    Used to distinguish `this.db.` (allowed) from `db.` (a leak).
+    """
+    return bool(re.search(r"(?<![.\w])" + re.escape(token), block))
+
+
 def strip_code(code: str) -> str:
     """Remove comments and string/template literals from TypeScript code.
 
@@ -157,72 +159,6 @@ def max_brace_depth(code: str) -> int:
         elif ch == "}":
             depth = max(0, depth - 1)
     return max_depth
-
-
-# A fence line: up to three spaces of indent, then ``` and the rest of the
-# line as the info string. Mirrors the fence-line parsing in binom_eval's
-# `code_blocks`, so the blocks paired below line up with that function's
-# output.
-_FENCE_LINE_RE = re.compile(r"^ {0,3}```([^`]*)$")
-
-# Info strings treated as TypeScript output, matching binom_eval.code_blocks.
-_TS_INFOS = frozenset({"", "ts", "typescript"})
-
-# How many trailing non-blank prose lines are eligible to carry a block's
-# label when the label sits above the fence rather than inside it.
-_LABEL_ZONE_LINES = 2
-
-
-def code_blocks_with_labels(text: str) -> list[tuple[str, str]]:
-    """TypeScript fenced code blocks paired with the text a label may live in.
-
-    A convention like a `// BEFORE` / `// AFTER` marker is usually written
-    inside the fence, but it may just as easily be written as a prose line
-    directly above the fence instead. The label text returned here is the
-    block body plus the last two non-blank lines of the prose immediately
-    preceding the fence, so a marker regex matches either placement without
-    the caller needing two code paths. Prose further up (e.g. a mention in
-    an earlier paragraph) falls outside that zone and is not considered
-    adjacent to the block.
-
-    Blocks are classified as TypeScript the same way `binom_eval.code_blocks`
-    does (a bare, `ts`, or `typescript` info string), so the bodies returned
-    here line up one-to-one with that function's output.
-
-    Args:
-      text: Model or document output that may contain fenced code blocks.
-
-    Returns:
-      One `(body, label_text)` pair per closed fenced TypeScript block, in
-      document order. `label_text` is the adjacent prose followed by
-      `body`; when there is no adjacent prose, `label_text` equals `body`.
-    """
-    pairs: list[tuple[str, str]] = []
-    lines = text.splitlines()
-    info: str | None = None
-    body_lines: list[str] = []
-    fence_start = 0
-    prose_start = 0
-    for idx, line in enumerate(lines):
-        fence = _FENCE_LINE_RE.match(line)
-        if info is None:
-            if fence:
-                info = fence.group(1).strip()
-                body_lines = []
-                fence_start = idx
-        elif fence and not fence.group(1).strip():
-            if (info.split() or [""])[0].lower() in _TS_INFOS:
-                body = "\n".join(body_lines)
-                preceding = lines[prose_start:fence_start]
-                prose = [ln for ln in preceding if ln.strip()]
-                zone = prose[-_LABEL_ZONE_LINES:]
-                label_text = "\n".join([*zone, body]) if zone else body
-                pairs.append((body, label_text))
-            info = None
-            prose_start = idx + 1
-        else:
-            body_lines.append(line)
-    return pairs
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +348,6 @@ def test_count_tokens_mentioned_does_not_strip_internal_whitespace() -> None:
     assert count_tokens_mentioned(("foo bar",), "foo bar baz") == 1
     assert count_tokens_mentioned(("foo bar",), "foobar baz") == 0
 
-
 # ---------------------------------------------------------------------------
 # Unit tests for strip_code
 # ---------------------------------------------------------------------------
@@ -481,82 +416,7 @@ def test_max_brace_depth_unbalanced_close_does_not_go_negative() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests for code_blocks_with_labels
-# ---------------------------------------------------------------------------
-
-
-def test_code_blocks_with_labels_finds_label_inside_fence() -> None:
-    text = "```typescript\n// BEFORE\nfunction f() {}\n```\n"
-    ((body, label_text),) = code_blocks_with_labels(text)
-    assert "function f" in body
-    assert BEFORE_MARK_RE.search(label_text)
-
-
-def test_code_blocks_with_labels_finds_label_directly_above_fence() -> None:
-    text = "// BEFORE\n```typescript\nfunction f() {}\n```\n"
-    ((body, label_text),) = code_blocks_with_labels(text)
-    assert not BEFORE_MARK_RE.search(body)
-    assert BEFORE_MARK_RE.search(label_text)
-
-
-def test_code_blocks_with_labels_finds_label_above_fence_with_blank_line() -> None:
-    text = "// BEFORE\n\n```typescript\nfunction f() {}\n```\n"
-    ((body, label_text),) = code_blocks_with_labels(text)
-    assert not BEFORE_MARK_RE.search(body)
-    assert BEFORE_MARK_RE.search(label_text)
-
-
-def test_code_blocks_with_labels_ignores_mention_several_lines_above() -> None:
-    text = (
-        "// BEFORE\n"
-        "some unrelated prose\n"
-        "more unrelated prose\n"
-        "```typescript\n"
-        "function f() {}\n"
-        "```\n"
-    )
-    ((body, label_text),) = code_blocks_with_labels(text)
-    assert not BEFORE_MARK_RE.search(body)
-    assert not BEFORE_MARK_RE.search(label_text)
-
-
-def test_code_blocks_with_labels_unlabeled_block_has_no_marker() -> None:
-    text = "```typescript\nfunction f() {}\n```\n"
-    ((body, label_text),) = code_blocks_with_labels(text)
-    assert not BEFORE_MARK_RE.search(label_text)
-    assert not AFTER_MARK_RE.search(label_text)
-    assert label_text == body
-
-
-def test_code_blocks_with_labels_pairs_each_block_with_its_own_prose() -> None:
-    text = (
-        "// BEFORE\n"
-        "```typescript\n"
-        "function f() {}\n"
-        "```\n"
-        "// AFTER\n"
-        "```typescript\n"
-        "function g() {}\n"
-        "```\n"
-    )
-    (before_body, before_label), (after_body, after_label) = (
-        code_blocks_with_labels(text)
-    )
-    assert BEFORE_MARK_RE.search(before_label)
-    assert not AFTER_MARK_RE.search(before_label)
-    assert AFTER_MARK_RE.search(after_label)
-    assert not BEFORE_MARK_RE.search(after_label)
-
-
-def test_code_blocks_with_labels_skips_non_typescript_blocks() -> None:
-    text = "```json\n{}\n```\n```typescript\nfunction f() {}\n```\n"
-    pairs = code_blocks_with_labels(text)
-    assert len(pairs) == 1
-    assert "function f" in pairs[0][0]
-
-
-# ---------------------------------------------------------------------------
-# Unit tests for the shared TypeScript-source regexes
+# Unit tests for shared regexes
 # ---------------------------------------------------------------------------
 
 

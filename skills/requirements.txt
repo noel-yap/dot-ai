@@ -13,5 +13,5 @@
 # session-scoped fixture -- so this suite no longer depends on it.
 #
 # Pinned to a git tag for reproducibility. Bump the tag to upgrade.
-binom-eval @ git+https://github.com/noel-yap/binom-eval@v0.4.0
+binom-eval @ git+https://github.com/noel-yap/binom-eval@v2.0.0
 pytest-rerunfailures>=14.0
