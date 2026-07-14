@@ -12,25 +12,18 @@ list, token-counting) live in `skills/test_utils.py`.
 
 from __future__ import annotations
 
+import json
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
-# Add `skills/` to sys.path so the shared `test_utils` module is
-# importable regardless of where pytest is invoked from.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
-from test_utils import (  # noqa: E402
-    FRONTMATTER_RE,
+from test_utils import (
     REQUIRED_SECTIONS,
     TS_BLOCK_RE,
     count_tokens_mentioned,
-    extract_frontmatter,
+    has_bare_token,
 )
-
-SKILL_PATH = Path(__file__).resolve().parent.parent / "SKILL.md"
 
 SUT_BLOCK_RE = re.compile(
     r"//\s*SUT\s*\(under test\)[^\n]*\n(.*?)//\s*end\s+SUT\s*\(under test\)",
@@ -59,47 +52,12 @@ PREFIXED_LEAK_TOKENS = (
 
 
 # ---------------------------------------------------------------------------
-# DI-specific helper
-# ---------------------------------------------------------------------------
-
-
-def has_bare_token(block: str, token: str) -> bool:
-    """Return True if `token` appears in `block` not preceded by a `.` or
-    word character — i.e., as a bare identifier rather than a member access.
-
-    Used to distinguish `this.db.` (allowed) from `db.` (a leak).
-    """
-    pattern = re.compile(r"(?<![.\w])" + re.escape(token))
-    return bool(pattern.search(block))
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def skill_text() -> str:
-    return SKILL_PATH.read_text(encoding="utf-8")
-
-
-@pytest.fixture(scope="module")
-def frontmatter(skill_text: str) -> dict[str, str]:
-    return extract_frontmatter(skill_text)
-
-
-@pytest.fixture(scope="module")
-def body(skill_text: str) -> str:
-    return FRONTMATTER_RE.sub("", skill_text, count=1)
-
-
-# ---------------------------------------------------------------------------
 # Skill structural tests
 # ---------------------------------------------------------------------------
 
 
-def test_skill_md_exists() -> None:
-    assert SKILL_PATH.is_file(), f"SKILL.md not found at {SKILL_PATH}"
+def test_skill_md_exists(skill_path) -> None:
+    assert skill_path.is_file(), f"SKILL.md not found at {skill_path}"
 
 
 def test_frontmatter_has_name(frontmatter: dict[str, str]) -> None:
@@ -189,6 +147,37 @@ def test_links_to_functional_core_skill(body: str) -> None:
         "expected a wiki-style link [[functional-core-imperative-shell]] "
         "to point readers to the complementary skill"
     )
+
+
+def test_trigger_concepts_covered_by_skill(skill_path: Path, body: str) -> None:
+    """Deterministic proxy for the live skill-trigger eval.
+
+    Each ``trigger_concepts`` entry in ``evals.json`` must appear in both the
+    eval's prompt and the skill's ``When to use`` section.  If the metadata
+    doesn't mention the same terms as the prompt, Claude won't invoke the skill
+    — this catches that without calling claude.
+    """
+    evals_path = skill_path.parent / "evals" / "typescript" / "evals.json"
+    if not evals_path.exists():
+        pytest.skip("no evals.json found")
+
+    when_match = re.search(
+        r"(?ims)^#{1,6}\s+When to use\s*$(.*?)(?=^#{1,6}\s+|\Z)", body
+    )
+    assert when_match, "When to use section not found"
+    when_text = when_match.group(1)
+
+    evals = json.loads(evals_path.read_text(encoding="utf-8"))["evals"]
+    for ev in evals:
+        for concept in ev.get("trigger_concepts", []):
+            assert concept in when_text, (
+                f"eval {ev['id']!r}: trigger_concept {concept!r} not found "
+                f"in 'When to use' section — add it or update trigger_concepts"
+            )
+            assert concept in ev["prompt"], (
+                f"eval {ev['id']!r}: trigger_concept {concept!r} declared but "
+                f"not present in the eval prompt"
+            )
 
 
 # ---------------------------------------------------------------------------

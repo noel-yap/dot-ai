@@ -3,8 +3,9 @@
     {
       "id": "mock-pain-class",
       "should_trigger": true,
-      "fixture": "../samples/order_shipper.ts",
-      "prompt_template": "I'm trying to test shipOrder below but every test ends up vi.mocking both ./db and ./email AND stubbing Date.now just to verify the international vs domestic subject line. Can you make it testable without monkey-patching those modules?\n\n```typescript\n{fixture}\n```\n\nIn your final response, include both the original code before refactoring and the complete refactored TypeScript, each in its own ```typescript code block, even if you also edit files directly. In the refactored code block, mark the unit under test by placing `// SUT (under test)` on the line before it and `// end SUT (under test)` on the line after it.",
+      "trigger_concepts": ["vi.mock", "Date.now"],
+      "file": "skills/dependency-injection/evals/samples/order_shipper.ts",
+      "prompt": "I'm trying to test shipOrder in skills/dependency-injection/evals/samples/order_shipper.ts but every test ends up vi.mocking both ./db and ./email AND stubbing Date.now just to verify the international vs domestic subject line. Can you read the file and make it testable without monkey-patching those modules?",
       "expected_output": "Claude reads the file, recognises the DI smell (hardcoded module imports + wall clock inside the unit), and refactors shipOrder into a class or factory whose collaborators (store, mailer, clock) arrive as constructor parameters. The refactored SUT contains no bare references to db, emailService, Date.now, or console.; all I/O goes through this.X / deps.X. A composition root wires the production modules.",
       "assertions": [
         {
@@ -32,8 +33,9 @@
     {
       "id": "hidden-time-and-env-fn",
       "should_trigger": true,
-      "fixture": "../samples/token_issuer.ts",
-      "prompt_template": "We can't unit-test issueToken below deterministically because Math.random, process.env.JWT_SECRET, and console.log are all baked into the function body. Please refactor so the test can pass deterministic values without poking globals.\n\n```typescript\n{fixture}\n```\n\nIn your final response, include both the original code before refactoring and the complete refactored TypeScript, each in its own ```typescript code block, even if you also edit files directly. In the refactored code block, mark the unit under test by placing `// SUT (under test)` on the line before it and `// end SUT (under test)` on the line after it.",
+      "trigger_concepts": ["Math.random", "process.env"],
+      "file": "skills/dependency-injection/evals/samples/token_issuer.ts",
+      "prompt": "We can't unit-test issueToken in skills/dependency-injection/evals/samples/token_issuer.ts deterministically because Math.random, process.env.JWT_SECRET, and console.log are all baked into the function body. Please refactor so the test can pass deterministic values without poking globals.",
       "expected_output": "Claude refactors issueToken to take a deps parameter (or returns a curried factory) that supplies rng, secret, sign, and log. The function body uses deps.X calls; no Math.random, process.env, or console. appear inside it. A composition root supplies the production values.",
       "assertions": [
         {
@@ -57,8 +59,9 @@
     {
       "id": "decouple-from-global-singleton",
       "should_trigger": true,
-      "fixture": "../samples/order_shipper.ts",
-      "prompt_template": "Multiple handlers in our codebase reach into the global db singleton imported from ./db, and we want to swap one of them to a read-replica without touching every file. Can you decouple shipOrder below from the global db singleton so callers can pass in whichever store they want?\n\n```typescript\n{fixture}\n```\n\nIn your final response, include both the original code before refactoring and the complete refactored TypeScript, each in its own ```typescript code block, even if you also edit files directly. In the refactored code block, mark the unit under test by placing `// SUT (under test)` on the line before it and `// end SUT (under test)` on the line after it.",
+      "trigger_concepts": ["singleton"],
+      "file": "skills/dependency-injection/evals/samples/order_shipper.ts",
+      "prompt": "Multiple handlers in our codebase reach into the global db singleton imported from ./db, and we want to swap one of them to a read-replica without touching every file. Can you decouple shipOrder in skills/dependency-injection/evals/samples/order_shipper.ts from the global db singleton so callers can pass in whichever store they want?",
       "expected_output": "Claude refactors shipOrder so the OrderStore arrives as a parameter (constructor or function argument), typed by a narrow interface. The unit no longer imports db directly. A composition root remains responsible for wiring the production db.",
       "assertions": [
         {
@@ -66,8 +69,8 @@
           "description": "Output introduces a parameter / constructor argument that supplies the store, replacing the direct ./db import inside the unit."
         },
         {
-          "id": "sut-has-no-bare-db-refs",
-          "description": "The refactored SUT body contains no bare db. references; the store is reached via this.X or deps.X. Other collaborators (emailService, the clock) may stay hardcoded, since the request scopes to the db singleton."
+          "id": "sut-has-no-bare-module-refs",
+          "description": "The refactored SUT body contains no bare db. references; the store is reached via this.X or deps.X."
         },
         {
           "id": "narrow-deps-interface",
@@ -82,8 +85,8 @@
     {
       "id": "pure-function-no-di-needed",
       "should_trigger": false,
-      "fixture": "../samples/pure_calculator.ts",
-      "prompt_template": "Add a unit test for computeCartTotal below that covers the empty-cart case, a single line with a percent discount, and a single line with a flat discount that exceeds the subtotal (it should clamp at zero, not go negative).\n\n```typescript\n{fixture}\n```\n\nIn your final response, include both the original code and the complete test file, each in its own ```typescript code block, even if you also edit files directly.",
+      "file": "skills/dependency-injection/evals/samples/pure_calculator.ts",
+      "prompt": "Add a unit test for computeCartTotal in skills/dependency-injection/evals/samples/pure_calculator.ts that covers the empty-cart case, a single line with a percent discount, and a single line with a flat discount that exceeds the subtotal (it should clamp at zero, not go negative).",
       "expected_output": "Claude adds tests (or shows test code) that pass plain data to computeCartTotal and assert on the returned number. The function is NOT refactored to take a deps parameter; no DI is introduced because there is nothing to inject. The dependency-injection skill is NOT invoked, because the file is the canonical 'When NOT to use' case.",
       "assertions": [
         {

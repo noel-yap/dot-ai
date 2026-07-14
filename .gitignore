@@ -1,3 +1,10 @@
 __pycache__/
 .venv/
 .idea/
+
+# macOS
+.DS_Store
+
+# Install artifacts
+.installed
+skills/.install.*.stamp

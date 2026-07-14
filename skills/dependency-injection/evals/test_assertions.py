@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from ._assertions import (
+    ASSERTION_HANDLERS,
     _adds_deps_param_to_pure_fn,
     _adds_test_code,
     _all_leaks_in_block,
     _bare_token_leaks,
     _candidate_sut_blocks,
     _code_blocks,
-    _has_bare_token,
     _has_composition_root,
     _has_constructor_with_deps,
     _has_deps_parameter,
@@ -27,7 +29,6 @@ from ._assertions import (
     assert_no_deps_parameter_added,
     assert_no_production_default_deps,
     assert_skill_not_invoked,
-    assert_sut_has_no_bare_db_refs,
     assert_sut_has_no_bare_globals,
     assert_sut_has_no_bare_module_refs,
 )
@@ -38,6 +39,8 @@ from binom_eval import (
     END_AFTER_MARKER,
     END_BEFORE_MARKER,
     EvalRun,
+    assert_handler_coverage,
+    load_evals,
 )
 
 
@@ -94,31 +97,6 @@ class TestCandidateSutBlocks:
     def test_falls_back_to_after_snippet_when_no_sut_marker(self) -> None:
         text = _after_block("class C { run() {} }")
         assert len(_candidate_sut_blocks(text)) == 1
-
-
-# ---------------------------------------------------------------------------
-# Bare-token detection
-# ---------------------------------------------------------------------------
-
-
-class TestHasBareToken:
-    def test_bare_db_dot(self) -> None:
-        assert _has_bare_token("await db.getOrder(id)", "db.")
-
-    def test_this_db_dot_is_ok(self) -> None:
-        assert not _has_bare_token("await this.db.getOrder(id)", "db.")
-
-    def test_deps_db_dot_is_ok(self) -> None:
-        assert not _has_bare_token("await deps.db.getOrder(id)", "db.")
-
-    def test_word_prefix_is_ok(self) -> None:
-        assert not _has_bare_token("await mydb.getOrder(id)", "db.")
-
-    def test_bare_fetch(self) -> None:
-        assert _has_bare_token("await fetch(url)", "fetch(")
-
-    def test_this_fetch_is_ok(self) -> None:
-        assert not _has_bare_token("await this.fetch(url)", "fetch(")
 
 
 class TestSubstringLeaks:
@@ -452,32 +430,6 @@ class TestAssertSutHasNoBareModuleRefs:
             assert_sut_has_no_bare_module_refs(_run(text))
 
 
-class TestAssertSutHasNoBareDbRefs:
-    def test_passes_when_other_collaborators_stay_hardcoded(self) -> None:
-        text = (
-            "```ts\n// SUT (under test)\n"
-            "export async function shipOrder(id: string, store: OrderStore) {\n"
-            "  const order = await store.getOrder(id);\n"
-            "  await emailService.send(order.email, 'Shipped', 'body');\n"
-            "}\n// end SUT (under test)\n```"
-        )
-        assert_sut_has_no_bare_db_refs(_run(text))
-
-    def test_fails_on_bare_db(self) -> None:
-        text = (
-            "```ts\n// SUT (under test)\n"
-            "export async function shipOrder(id: string) {\n"
-            "  const order = await db.getOrder(id);\n"
-            "}\n// end SUT (under test)\n```"
-        )
-        with pytest.raises(AssertionError, match="db module bare"):
-            assert_sut_has_no_bare_db_refs(_run(text))
-
-    def test_fails_when_no_sut_block(self) -> None:
-        with pytest.raises(AssertionFailure, match="no refactored SUT"):
-            assert_sut_has_no_bare_db_refs(_run("just prose"))
-
-
 class TestAssertCompositionRootPresent:
     def test_passes_when_import_plus_new(self) -> None:
         text = (
@@ -566,3 +518,14 @@ class TestAssertSkillNotInvoked:
         ) as exc:
             assert_skill_not_invoked(_run("", skill_invoked=True))
         assert exc.value.sections == (("Tool uses", "[]"),)
+
+
+def test_every_assertion_has_a_handler() -> None:
+    """Every assertion id in evals.json has a registered handler.
+
+    Guards against dropping or renaming a handler while an eval still
+    references it: assert_handler_coverage names every gap eagerly rather
+    than failing mid-live-run.
+    """
+    evals_path = Path(__file__).resolve().parent / "typescript" / "evals.json"
+    assert_handler_coverage(load_evals(evals_path), ASSERTION_HANDLERS)

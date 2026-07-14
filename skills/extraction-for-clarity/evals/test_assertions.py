@@ -13,6 +13,8 @@ from binom_eval import (
     END_AFTER_MARKER,
     END_BEFORE_MARKER,
     EvalRun,
+    assert_handler_coverage,
+    load_evals,
 )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -23,6 +25,7 @@ from eval_assertion_utils import (  # noqa: E402
 )
 
 from ._assertions import (
+    ASSERTION_HANDLERS,
     _declared_fn_names,
     _new_helper_names,
     assert_adds_empty_input_guard,
@@ -449,3 +452,14 @@ class TestAssertSkillNotInvoked:
         with pytest.raises(AssertionFailure, match="When-NOT-to-use") as exc:
             assert_skill_not_invoked(_run("", skill_invoked=True))
         assert exc.value.sections == (("Tool uses", "[]"),)
+
+
+def test_every_assertion_has_a_handler() -> None:
+    """Every assertion id in evals.json has a registered handler.
+
+    Guards against dropping or renaming a handler while an eval still
+    references it: assert_handler_coverage names every gap eagerly rather
+    than failing mid-live-run.
+    """
+    evals_path = Path(__file__).resolve().parent / "typescript" / "evals.json"
+    assert_handler_coverage(load_evals(evals_path), ASSERTION_HANDLERS)
