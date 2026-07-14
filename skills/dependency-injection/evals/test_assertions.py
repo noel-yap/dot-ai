@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from ._assertions import (
+    ASSERTION_HANDLERS,
     _adds_deps_param_to_pure_fn,
     _adds_test_code,
     _all_leaks_in_block,
@@ -36,6 +39,8 @@ from binom_eval import (
     END_AFTER_MARKER,
     END_BEFORE_MARKER,
     EvalRun,
+    assert_handler_coverage,
+    load_evals,
 )
 
 
@@ -513,3 +518,14 @@ class TestAssertSkillNotInvoked:
         ) as exc:
             assert_skill_not_invoked(_run("", skill_invoked=True))
         assert exc.value.sections == (("Tool uses", "[]"),)
+
+
+def test_every_assertion_has_a_handler() -> None:
+    """Every assertion id in evals.json has a registered handler.
+
+    Guards against dropping or renaming a handler while an eval still
+    references it: assert_handler_coverage names every gap eagerly rather
+    than failing mid-live-run.
+    """
+    evals_path = Path(__file__).resolve().parent / "typescript" / "evals.json"
+    assert_handler_coverage(load_evals(evals_path), ASSERTION_HANDLERS)
